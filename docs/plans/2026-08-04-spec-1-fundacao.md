@@ -186,12 +186,21 @@ npx expo install expo-router react-native-safe-area-context react-native-screens
 
 npm install firebase@^12.17.0 zustand@^5 @tanstack/react-query@^5 nativewind@^4.2.6
 npm install -D tailwindcss@^3.4.19 jest-expo jest @types/jest \
-  @testing-library/react-native react-test-renderer \
+  @testing-library/react-native test-renderer \
   @firebase/rules-unit-testing@^5 firebase-tools@^15
 ```
 
 > **`tailwindcss@^3.4.19` é obrigatório.** O `@latest` instala 4.x e quebra o preset do
 > NativeWind com erro de config difícil de diagnosticar.
+
+> **`test-renderer`, não `react-test-renderer`.** O `@testing-library/react-native` v14
+> trocou de renderizador: seu peer é `test-renderer@^1.0.0` (que aceita `react@^19.0.0`).
+> O `react-test-renderer@^19.2.8` exige `react@^19.2.8` e colide com o `react@19.2.3` que
+> o Expo SDK 57 fixa — o `npm install` falha com ERESOLVE.
+>
+> **Não resolver isso com `.npmrc` contendo `legacy-peer-deps=true`.** Isso silencia
+> *todos* os conflitos de peer dep do projeto, inclusive os que a gente vai querer
+> enxergar. Se aparecer um `.npmrc` desses, apague.
 
 - [ ] **Step 3: Configurar `tsconfig.json`**
 
