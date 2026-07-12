@@ -196,6 +196,7 @@ npx expo install expo-router react-native-safe-area-context react-native-screens
 npm install firebase@^12.17.0 zustand@^5 @tanstack/react-query@^5 nativewind@^4.2.6
 npm install -D tailwindcss@^3.4.19 jest-expo jest@^29.7.0 @types/jest@^29.5.14 \
   @testing-library/react-native test-renderer babel-preset-expo@~57.0.5 \
+  @react-native/jest-preset@^0.86.2 \
   @firebase/rules-unit-testing@^5 firebase-tools@^15
 
 npm install react-dom@19.2.3
