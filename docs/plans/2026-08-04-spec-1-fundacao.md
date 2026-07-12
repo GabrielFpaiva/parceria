@@ -143,10 +143,13 @@ lados sem arrastar dependência.
 ## Task 1: Scaffold do projeto e toolchain
 
 **Files:**
-- Create: `parceria/package.json`, `app.json`, `tsconfig.json`, `babel.config.js`,
-  `metro.config.js`, `jest.config.js`, `.gitignore`, `.env.example`
+- Create: `parceria/package.json`, `app.json`, `tsconfig.json`, `babel.config.js`
 - Create: `app/_layout.tsx`, `app/(app)/index.tsx`
 - Test: `src/core/__tests__/smoke.test.tsx`
+
+> `metro.config.js` pertence à Task 3 (é lá que o NativeWind entra), `.env.example` à
+> Task 5, e `jest.config.js` não existe — a configuração do Jest vive na chave `jest`
+> do `package.json`. Nenhum dos três é desta task.
 
 **Interfaces:**
 - Consumes: nada (primeira task)
@@ -185,10 +188,32 @@ npx expo install expo-router react-native-safe-area-context react-native-screens
   @react-native-async-storage/async-storage
 
 npm install firebase@^12.17.0 zustand@^5 @tanstack/react-query@^5 nativewind@^4.2.6
-npm install -D tailwindcss@^3.4.19 jest-expo jest @types/jest \
-  @testing-library/react-native test-renderer \
+npm install -D tailwindcss@^3.4.19 jest-expo jest@^29.7.0 @types/jest@^29.5.14 \
+  @testing-library/react-native test-renderer babel-preset-expo@~57.0.5 \
   @firebase/rules-unit-testing@^5 firebase-tools@^15
+
+npm install react-dom@19.2.3
 ```
+
+### As quatro armadilhas de dependência do SDK 57
+
+Todas foram encontradas em execução real, e todas travam o `npm install` ou a suíte de
+testes. A raiz das três primeiras é a mesma: **o Expo SDK 57 fixa `react@19.2.3`**, e
+qualquer pacote que peça `^19.2.8` explode a resolução.
+
+| Pacote | Sintoma | Correção |
+|---|---|---|
+| `react-test-renderer` | ERESOLVE: exige `react@^19.2.8` | Não usar. O `@testing-library/react-native` v14 trocou de renderizador — o peer dele é **`test-renderer@^1.0.0`** |
+| `react-dom` | ERESOLVE ao re-resolver a árvore: sobe sozinho para 19.2.8 | Fixar em **`19.2.3`** nas dependencies |
+| `babel-preset-expo` | `jest` e `expo export` falham com `MODULE_NOT_FOUND` | Só existe aninhado em `expo/`; declarar **`~57.0.5`** na raiz para ser içado |
+| `jest` | `TypeError: this._moduleMocker.clearMocksOnScope is not a function` | O `jest-expo@57.0.3` ainda é da geração **Jest 29** (`babel-jest`, `@jest/globals`, `jest-snapshot`, `jest-environment-jsdom` todos `^29.2.1`). Fixar `jest@^29.7.0` e `@types/jest@^29` |
+
+> **Nunca resolver nada disso com `.npmrc` contendo `legacy-peer-deps=true`.** Isso
+> silencia *todos* os conflitos de peer dep do projeto, inclusive os que a gente vai
+> querer enxergar. Se aparecer um `.npmrc` desses, apague.
+
+> **`tailwindcss@^3.4.19` é obrigatório.** O `@latest` instala 4.x e quebra o preset do
+> NativeWind com erro de config difícil de diagnosticar.
 
 > **`tailwindcss@^3.4.19` é obrigatório.** O `@latest` instala 4.x e quebra o preset do
 > NativeWind com erro de config difícil de diagnosticar.

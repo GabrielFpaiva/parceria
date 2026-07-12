@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "parceria-scaffold",
-    "slug": "parceria-scaffold",
+    "name": "parceria",
+    "slug": "parceria",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,6 +20,13 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "scheme": "parceria",
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
     }
   }
 }
