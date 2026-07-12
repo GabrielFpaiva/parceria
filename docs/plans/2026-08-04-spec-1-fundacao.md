@@ -68,6 +68,12 @@ Requisitos de projeto inteiro. **Valem implicitamente para toda task.**
 - **Limite de ~200 linhas por arquivo.**
 - **Toda regra de segurança tem um teste de negação.** O teste que importa não é "o dono
   consegue escrever", é "o estranho é bloqueado".
+- **No `@testing-library/react-native` v14, `render` e `fireEvent` são assíncronos.**
+  `render()`, `fireEvent()`, `fireEvent.press()`, `fireEvent.changeText()`, `rerender()`
+  e `unmount()` retornam Promise. **Todo `it()` que renderiza é `async` e todo chamada
+  leva `await`.** Sem isso o teste falha com ``​`render` function has not been called``,
+  porque `screen` só é populado depois de um await interno. Os matchers (`getByText`,
+  `getByLabelText`, `queryByText`) continuam síncronos.
 - **Texto de interface em português; código, pastas e identificadores em inglês.**
 - **A palavra "XP" nunca aparece em texto de interface.** Sempre **"XParceria"**. No
   código, `xparceria` / `xpIntoLevel` são aceitáveis como identificadores.
@@ -818,29 +824,29 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { Button } from '../Button';
 
 describe('Button', () => {
-  it('mostra o rótulo e dispara onPress', () => {
+  it('mostra o rótulo e dispara onPress', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} />);
-    fireEvent.press(screen.getByText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} />);
+    await fireEvent.press(screen.getByText('Continuar'));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it('não dispara onPress quando desabilitado', () => {
+  it('não dispara onPress quando desabilitado', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} disabled />);
-    fireEvent.press(screen.getByText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} disabled />);
+    await fireEvent.press(screen.getByText('Continuar'));
     expect(onPress).not.toHaveBeenCalled();
   });
 
-  it('não dispara onPress enquanto carrega', () => {
+  it('não dispara onPress enquanto carrega', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} loading />);
-    fireEvent.press(screen.getByLabelText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} loading />);
+    await fireEvent.press(screen.getByLabelText('Continuar'));
     expect(onPress).not.toHaveBeenCalled();
   });
 
-  it('expõe papel e estado de acessibilidade', () => {
-    render(<Button label="Continuar" onPress={jest.fn()} disabled />);
+  it('expõe papel e estado de acessibilidade', async () => {
+    await render(<Button label="Continuar" onPress={jest.fn()} disabled />);
     const button = screen.getByLabelText('Continuar');
     expect(button.props.accessibilityRole).toBe('button');
     expect(button.props.accessibilityState.disabled).toBe(true);
@@ -997,19 +1003,19 @@ import { render, screen } from '@testing-library/react-native';
 import { XParceriaBar } from '../XParceriaBar';
 
 describe('XParceriaBar', () => {
-  it('mostra progresso contra o custo do nível atual', () => {
+  it('mostra progresso contra o custo do nível atual', async () => {
     // nível 18 exige 496 para o próximo (ver shared/level.ts)
-    render(<XParceriaBar level={18} xpIntoLevel={420} />);
+    await render(<XParceriaBar level={18} xpIntoLevel={420} />);
     expect(screen.getByText('420 / 496 XParceria')).toBeTruthy();
   });
 
-  it('nunca escreve a palavra "XP" sozinha na interface', () => {
-    render(<XParceriaBar level={3} xpIntoLevel={10} />);
+  it('nunca escreve a palavra "XP" sozinha na interface', async () => {
+    await render(<XParceriaBar level={3} xpIntoLevel={10} />);
     expect(screen.queryByText(/\bXP\b/)).toBeNull();
   });
 
-  it('expõe o progresso para leitores de tela', () => {
-    render(<XParceriaBar level={18} xpIntoLevel={420} />);
+  it('expõe o progresso para leitores de tela', async () => {
+    await render(<XParceriaBar level={18} xpIntoLevel={420} />);
     const bar = screen.getByLabelText('Progresso de XParceria');
     expect(bar.props.accessibilityValue).toEqual({ min: 0, max: 496, now: 420 });
   });
@@ -1023,23 +1029,23 @@ import { render, screen } from '@testing-library/react-native';
 import { Avatar } from '../Avatar';
 
 describe('Avatar', () => {
-  it('mostra o emoji quando não há foto', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
+  it('mostra o emoji quando não há foto', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
     expect(screen.getByText('🦊')).toBeTruthy();
   });
 
-  it('esconde o emoji quando há foto', () => {
-    render(<Avatar photoURL="https://exemplo.com/a.jpg" fallbackEmoji="🦊" />);
+  it('esconde o emoji quando há foto', async () => {
+    await render(<Avatar photoURL="https://exemplo.com/a.jpg" fallbackEmoji="🦊" />);
     expect(screen.queryByText('🦊')).toBeNull();
   });
 
-  it('colore o anel pela faixa de temperatura', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" temperature={90} />);
+  it('colore o anel pela faixa de temperatura', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" temperature={90} />);
     expect(screen.getByLabelText('Parceria em chamas')).toBeTruthy();
   });
 
-  it('não desenha anel sem temperatura', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
+  it('não desenha anel sem temperatura', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
     expect(screen.queryByLabelText(/^Parceria /)).toBeNull();
   });
 });
@@ -1919,26 +1925,29 @@ function Probe() {
 beforeEach(() => { listeners.length = 0; });
 
 describe('AuthProvider', () => {
-  it('começa em loading', () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+  it('começa em loading', async () => {
+    await render(<AuthProvider><Probe /></AuthProvider>);
     expect(screen.getByText('loading:none')).toBeTruthy();
   });
 
   it('vai para signedOut quando não há sessão', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     listeners[0]!(null);
     await waitFor(() => expect(screen.getByText('signedOut:none')).toBeTruthy());
   });
 
   it('vai para signedIn e expõe o uid', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     listeners[0]!({ uid: 'alice-uid' });
     await waitFor(() => expect(screen.getByText('signedIn:alice-uid')).toBeTruthy());
   });
 
-  it('useAuth fora do provider dá erro claro', () => {
+  it('useAuth fora do provider dá erro claro', async () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => render(<Probe />)).toThrow('useAuth precisa estar dentro de AuthProvider');
+    // render é assíncrono: o erro chega como rejeição, não como throw síncrono
+    await expect(render(<Probe />)).rejects.toThrow(
+      'useAuth precisa estar dentro de AuthProvider',
+    );
     spy.mockRestore();
   });
 });
@@ -2035,25 +2044,25 @@ beforeEach(() => signIn.mockReset());
 describe('SignInScreen', () => {
   it('envia e-mail e senha', async () => {
     signIn.mockResolvedValue(undefined);
-    render(<SignInScreen />);
-    fireEvent.changeText(screen.getByLabelText('E-mail'), 'gabriel@exemplo.com');
-    fireEvent.changeText(screen.getByLabelText('Senha'), 'segredo123');
-    fireEvent.press(screen.getByLabelText('Entrar'));
+    await render(<SignInScreen />);
+    await fireEvent.changeText(screen.getByLabelText('E-mail'), 'gabriel@exemplo.com');
+    await fireEvent.changeText(screen.getByLabelText('Senha'), 'segredo123');
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     await waitFor(() => expect(signIn).toHaveBeenCalledWith('gabriel@exemplo.com', 'segredo123'));
   });
 
   it('mostra a mensagem traduzida quando o Firebase recusa', async () => {
     signIn.mockRejectedValue({ code: 'auth/invalid-credential' });
-    render(<SignInScreen />);
-    fireEvent.changeText(screen.getByLabelText('E-mail'), 'a@b.com');
-    fireEvent.changeText(screen.getByLabelText('Senha'), 'errada');
-    fireEvent.press(screen.getByLabelText('Entrar'));
+    await render(<SignInScreen />);
+    await fireEvent.changeText(screen.getByLabelText('E-mail'), 'a@b.com');
+    await fireEvent.changeText(screen.getByLabelText('Senha'), 'errada');
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     await waitFor(() => expect(screen.getByText('E-mail ou senha incorretos.')).toBeTruthy());
   });
 
-  it('não chama signIn com campos vazios', () => {
-    render(<SignInScreen />);
-    fireEvent.press(screen.getByLabelText('Entrar'));
+  it('não chama signIn com campos vazios', async () => {
+    await render(<SignInScreen />);
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     expect(signIn).not.toHaveBeenCalled();
   });
 });
