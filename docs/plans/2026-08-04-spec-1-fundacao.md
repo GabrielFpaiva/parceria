@@ -75,6 +75,8 @@ Requisitos de projeto inteiro. **Valem implicitamente para toda task.**
   porque `screen` só é populado depois de um await interno. Os matchers (`getByText`,
   `getByLabelText`, `queryByText`) continuam síncronos.
 - **Texto de interface em português; código, pastas e identificadores em inglês.**
+  **Comentários e JSDoc em português** — quem mantém este código pensa em português, e
+  comentário existe para explicar o porquê a um humano. Só identificador é inglês.
 - **A palavra "XP" nunca aparece em texto de interface.** Sempre **"XParceria"**. No
   código, `xparceria` / `xpIntoLevel` são aceitáveis como identificadores.
 - **Nenhum segredo commitado.** `.env` no `.gitignore`; `.env.example` versionado.
