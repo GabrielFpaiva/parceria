@@ -40,6 +40,9 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading 
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: blocked, busy: loading === true }}
+      // `disabled` nativo além da guarda em handlePress: sem ele o Pressable continua
+      // capturando o toque como gesture responder mesmo desabilitado.
+      disabled={blocked}
       onPress={handlePress}
       style={({ pressed }) => [
         styles.base,

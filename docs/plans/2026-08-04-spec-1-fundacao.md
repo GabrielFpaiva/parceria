@@ -830,9 +830,42 @@ A paleta de temperatura é **derivada** de `TEMPERATURE_BANDS`, não redigitada.
 do Step 2 nunca poderia falhar por divergência — e é exatamente esse o objetivo do
 desenho.
 
-- [ ] **Step 5: Rodar o teste dos tokens**
+- [ ] **Step 5: Amarrar a paleta do Tailwind ao domínio**
 
-Run: `npx jest src/core/ui/__tests__/theme.test.ts`
+`theme.ts` deriva a paleta de `TEMPERATURE_BANDS`, mas o `tailwind.config.js` é CJS e não
+consegue importar TypeScript sem tooling extra — então ali os hex ficam redigitados. São
+**duas superfícies** com a mesma cor, e sem guarda a segunda diverge em silêncio quando
+`TEMPERATURE_BANDS` mudar.
+
+`src/core/ui/__tests__/tailwind-palette.test.ts`:
+
+```ts
+import { TEMPERATURE_BANDS } from '@shared/constants';
+
+const tailwindConfig = require('../../../../tailwind.config.js');
+const temp = tailwindConfig.theme.extend.colors.temp as Record<string, string>;
+
+describe('paleta do tailwind.config.js', () => {
+  it('é idêntica à do domínio', () => {
+    for (const band of TEMPERATURE_BANDS) {
+      expect(temp[band.id]).toBe(band.color);
+    }
+  });
+
+  it('não tem nenhuma cor de temperatura a mais', () => {
+    expect(Object.keys(temp).sort()).toEqual(
+      TEMPERATURE_BANDS.map((b) => b.id).sort(),
+    );
+  });
+});
+```
+
+O segundo teste importa tanto quanto o primeiro: sem ele, uma faixa removida do domínio
+continuaria existindo como classe do Tailwind sem ninguém notar.
+
+- [ ] **Step 6: Rodar os testes dos tokens**
+
+Run: `npx jest src/core/ui/__tests__/`
 Expected: PASS
 
 - [ ] **Step 6: Escrever o teste do Button (que vai falhar)**
@@ -955,6 +988,9 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading 
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: blocked, busy: loading === true }}
+      // `disabled` nativo além da guarda em handlePress: sem ele o Pressable continua
+      // capturando o toque como gesture responder mesmo desabilitado.
+      disabled={blocked}
       onPress={handlePress}
       style={({ pressed }) => [
         styles.base,
