@@ -1112,6 +1112,45 @@ describe('Avatar', () => {
 Run: `npx jest src/core/ui/__tests__/`
 Expected: FAIL nos dois arquivos novos — módulos não encontrados.
 
+- [ ] **Step 2b: Mockar o `expo-image` (gap do `jest-expo@57.0.3`)**
+
+Qualquer suíte que importe `expo-image` **quebra ao carregar**, antes de rodar qualquer
+teste, com `TypeError: observe.getIntegrations is not a function`.
+
+A causa é upstream e verificável: `expo-image@57.0.2` chama `observe.getIntegrations()`
+no momento do import (`node_modules/expo-image/src/observe.ts:159`), mas o mock nativo de
+`ExpoObserve` que o `jest-expo@57.0.3` fornece só implementa `configure`,
+`dispatchEvents`, `setBundleDefaults` e `addListener` — `getIntegrations` não existe. Os
+dois pacotes são do mesmo SDK 57; é um descompasso entre eles, não erro nosso.
+
+`__mocks__/expo-image.js` na raiz do projeto:
+
+```js
+// Existe por um gap do jest-expo@57.0.3: o mock nativo de ExpoObserve não implementa
+// getIntegrations(), que o expo-image@57.0.2 chama no import (src/observe.ts:159).
+// Sem isso, toda suíte que importa expo-image quebra ao carregar.
+// REMOVER quando o jest-expo corrigir o mock — e conferir se o Avatar ainda passa.
+const React = require('react');
+const { Image: RNImage } = require('react-native');
+
+function Image(props) {
+  return React.createElement(RNImage, props);
+}
+
+module.exports = { Image, ImageBackground: Image };
+```
+
+Jest aplica `__mocks__/<pacote>.js` da raiz automaticamente para módulos de
+`node_modules`, sem precisar de `jest.mock()`.
+
+> **Por que mockar em vez de remendar o mock do `ExpoObserve`:** remendar dependeria da
+> estrutura interna do `jest-expo`, que muda entre versões. E o que o teste do `Avatar`
+> verifica é a **nossa** lógica — emoji quando não há foto, imagem quando há — não a
+> decodificação de imagem do `expo-image`. Mockar a fronteira é o certo aqui.
+>
+> **Não trocar por `Image` do `react-native`** no código de produção: o `expo-image` foi
+> escolhido pelo cache e desempenho. A troca vale só dentro do mock de teste.
+
 - [ ] **Step 3: Implementar `ProgressRing`**
 
 `src/core/ui/ProgressRing.tsx`:
