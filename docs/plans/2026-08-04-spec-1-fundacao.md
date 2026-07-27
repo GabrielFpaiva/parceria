@@ -1332,7 +1332,7 @@ Expected: imprime uma versão (ex.: `openjdk version "21..."`), não a mensagem
 
 - [ ] **Step 2: Criar o projeto no console do Firebase**
 
-Manual, no console: criar o projeto `parceria-dev`, habilitar **Authentication →
+Manual, no console: criar o projeto (ID real: **`parceria-db699`**), habilitar **Authentication →
 Email/Password** e criar o **Firestore** em modo de produção (as regras vêm da Task 6).
 Registrar um app **Web** (não iOS/Android — o JS SDK usa a config web) e copiar as
 credenciais.
@@ -1379,7 +1379,7 @@ echo ".env" >> .gitignore
 `.firebaserc`:
 
 ```json
-{ "projects": { "default": "parceria-dev" } }
+{ "projects": { "default": "parceria-db699" } }
 ```
 
 `firestore.indexes.json` (vazio por ora; os índices compostos chegam na Spec 3):
