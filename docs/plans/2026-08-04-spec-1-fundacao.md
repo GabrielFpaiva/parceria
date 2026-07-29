@@ -1444,6 +1444,53 @@ export function authErrorMessage(code: string): string {
 }
 ```
 
+- [ ] **Step 7b: Declarar `getReactNativePersistence` (augmentação de módulo)**
+
+`customConditions: ["react-native"]` no `tsconfig.json` **não basta** — descoberto em
+execução. O `exports` de `@firebase/auth@1.13.4` lista as chaves nesta ordem:
+
+```
+['types', 'node', 'react-native', 'cordova', 'webworker', 'browser', 'default']
+```
+
+A resolução condicional usa **a primeira chave que casa, na ordem do `package.json`** —
+e o TypeScript sempre casa `types`. Então ele para em `dist/auth-public.d.ts`, que não
+declara `getReactNativePersistence`, sem nunca chegar em `dist/rn/index.rn.d.ts`, que
+declara. Em runtime funciona (o Metro resolve pela condição `react-native`); só os tipos
+não enxergam. Já estamos na versão mais recente do `firebase` — não há upgrade que
+resolva.
+
+`types/firebase-auth.d.ts`:
+
+```ts
+// O exports de @firebase/auth lista "types" antes de "react-native", então o tsc para
+// em auth-public.d.ts e nunca vê getReactNativePersistence — que existe em runtime
+// (dist/rn/index.rn.d.ts) e é resolvido normalmente pelo Metro.
+// Declaramos aqui o que de fato existe. REMOVER quando o upstream reordenar as chaves.
+import type { Persistence, ReactNativeAsyncStorage } from 'firebase/auth';
+
+declare module 'firebase/auth' {
+  export function getReactNativePersistence(
+    storage: ReactNativeAsyncStorage,
+  ): Persistence;
+}
+```
+
+`Persistence` e `ReactNativeAsyncStorage` **já são exportados** pelos tipos padrão
+(`auth-public.d.ts:2399` e `:2748`) — só a função falta, então a augmentação é mínima e
+não reescreve nenhum tipo.
+
+> **Por que não `@ts-ignore` nem `as any`:** os dois desligam a checagem no ponto de uso e
+> apagariam um erro real se a assinatura mudasse. A augmentação declara exatamente o que
+> existe e continua verificando o argumento.
+>
+> **Por que não import de subpath profundo** (`firebase/auth/dist/rn/...`): amarra o
+> código a um caminho interno do pacote, que quebra em qualquer refatoração do upstream.
+>
+> **Nota sobre a versão do AsyncStorage:** com a v2 (que é a instalada, 2.2.0) o import é
+> default — `import AsyncStorage from '@react-native-async-storage/async-storage'`. A v3
+> mudou para `createAsyncStorage('app')`; se o pacote for atualizado, este ponto muda.
+
 - [ ] **Step 8: Implementar o cliente**
 
 `src/core/firebase/client.ts`:
