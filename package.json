@@ -46,10 +46,12 @@
     "web": "expo start --web",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "validate": "npm run typecheck && npm test"
+    "test:rules": "firebase emulators:exec --only firestore \"jest -c jest.rules.config.js\"",
+    "validate": "npm run typecheck && npm test && npm run test:rules"
   },
   "private": true,
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "testPathIgnorePatterns": ["/node_modules/", "<rootDir>/tests/rules/"]
   }
 }
