@@ -2543,7 +2543,8 @@ describe('normalizeHandle', () => {
 });
 
 describe('validateHandle', () => {
-  it.each(['gabriel', 'g7', 'gabriel_paiva', 'ab1'])('aceita %s', (h) => {
+  // 'g7a' e nao 'g7': o minimo e 3 caracteres, e o proprio teste abaixo rejeita 'ab'.
+  it.each(['gabriel', 'g7a', 'gabriel_paiva', 'ab1'])('aceita %s', (h) => {
     expect(validateHandle(h).ok).toBe(true);
   });
 
@@ -2659,12 +2660,15 @@ afterAll(async () => { await env.cleanup(); });
 beforeEach(async () => { await env.clearFirestore(); });
 
 /** Espelha createProfile() sem depender do cliente do app (que importa expo-*). */
+/**
+ * Espelha createProfile() SEM a pre-checagem `tx.get`. Isso e proposital: a
+ * pre-checagem lanca um Error generico do cliente antes de a regra de seguranca
+ * rodar, e `assertFails` exige PERMISSION_DENIED de verdade — com ela, o teste
+ * passaria sem nunca exercitar a regra.
+ */
 async function claim(db: Firestore, uid: string, handle: string) {
   return runTransaction(db, async (tx) => {
-    const handleRef = doc(db, 'handles', handle);
-    const existing = await tx.get(handleRef);
-    if (existing.exists()) throw new Error('taken');
-    tx.set(handleRef, { uid });
+    tx.set(doc(db, 'handles', handle), { uid });
     tx.set(doc(db, 'users', uid), validProfile(uid, handle));
   });
 }
