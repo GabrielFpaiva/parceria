@@ -1,5 +1,51 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
 node_modules/
+
+# Expo
 .expo/
 dist/
+web-build/
+# expo-env.d.ts é versionado de propósito (Task 3): sem ele, `tsc` quebra o import
+# de global.css antes do primeiro `expo start` gerar o arquivo sozinho.
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# firebase emulators
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
 .env
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# scratch (superpowers sdd workspace)
 .superpowers/

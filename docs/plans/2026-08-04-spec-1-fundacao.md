@@ -68,7 +68,15 @@ Requisitos de projeto inteiro. **Valem implicitamente para toda task.**
 - **Limite de ~200 linhas por arquivo.**
 - **Toda regra de segurança tem um teste de negação.** O teste que importa não é "o dono
   consegue escrever", é "o estranho é bloqueado".
+- **No `@testing-library/react-native` v14, `render` e `fireEvent` são assíncronos.**
+  `render()`, `fireEvent()`, `fireEvent.press()`, `fireEvent.changeText()`, `rerender()`
+  e `unmount()` retornam Promise. **Todo `it()` que renderiza é `async` e todo chamada
+  leva `await`.** Sem isso o teste falha com ``​`render` function has not been called``,
+  porque `screen` só é populado depois de um await interno. Os matchers (`getByText`,
+  `getByLabelText`, `queryByText`) continuam síncronos.
 - **Texto de interface em português; código, pastas e identificadores em inglês.**
+  **Comentários e JSDoc em português** — quem mantém este código pensa em português, e
+  comentário existe para explicar o porquê a um humano. Só identificador é inglês.
 - **A palavra "XP" nunca aparece em texto de interface.** Sempre **"XParceria"**. No
   código, `xparceria` / `xpIntoLevel` são aceitáveis como identificadores.
 - **Nenhum segredo commitado.** `.env` no `.gitignore`; `.env.example` versionado.
@@ -143,10 +151,13 @@ lados sem arrastar dependência.
 ## Task 1: Scaffold do projeto e toolchain
 
 **Files:**
-- Create: `parceria/package.json`, `app.json`, `tsconfig.json`, `babel.config.js`,
-  `metro.config.js`, `jest.config.js`, `.gitignore`, `.env.example`
+- Create: `parceria/package.json`, `app.json`, `tsconfig.json`, `babel.config.js`
 - Create: `app/_layout.tsx`, `app/(app)/index.tsx`
 - Test: `src/core/__tests__/smoke.test.tsx`
+
+> `metro.config.js` pertence à Task 3 (é lá que o NativeWind entra), `.env.example` à
+> Task 5, e `jest.config.js` não existe — a configuração do Jest vive na chave `jest`
+> do `package.json`. Nenhum dos três é desta task.
 
 **Interfaces:**
 - Consumes: nada (primeira task)
@@ -185,13 +196,45 @@ npx expo install expo-router react-native-safe-area-context react-native-screens
   @react-native-async-storage/async-storage
 
 npm install firebase@^12.17.0 zustand@^5 @tanstack/react-query@^5 nativewind@^4.2.6
-npm install -D tailwindcss@^3.4.19 jest-expo jest @types/jest \
-  @testing-library/react-native react-test-renderer \
+npm install -D tailwindcss@^3.4.19 jest-expo jest@^29.7.0 @types/jest@^29.5.14 \
+  @testing-library/react-native test-renderer babel-preset-expo@~57.0.5 \
+  @react-native/jest-preset@^0.86.2 \
   @firebase/rules-unit-testing@^5 firebase-tools@^15
+
+npm install react-dom@19.2.3
 ```
+
+### As quatro armadilhas de dependência do SDK 57
+
+Todas foram encontradas em execução real, e todas travam o `npm install` ou a suíte de
+testes. A raiz das três primeiras é a mesma: **o Expo SDK 57 fixa `react@19.2.3`**, e
+qualquer pacote que peça `^19.2.8` explode a resolução.
+
+| Pacote | Sintoma | Correção |
+|---|---|---|
+| `react-test-renderer` | ERESOLVE: exige `react@^19.2.8` | Não usar. O `@testing-library/react-native` v14 trocou de renderizador — o peer dele é **`test-renderer@^1.0.0`** |
+| `react-dom` | ERESOLVE ao re-resolver a árvore: sobe sozinho para 19.2.8 | Fixar em **`19.2.3`** nas dependencies |
+| `babel-preset-expo` | `jest` e `expo export` falham com `MODULE_NOT_FOUND` | Só existe aninhado em `expo/`; declarar **`~57.0.5`** na raiz para ser içado |
+| `jest` | `TypeError: this._moduleMocker.clearMocksOnScope is not a function` | O `jest-expo@57.0.3` ainda é da geração **Jest 29** (`babel-jest`, `@jest/globals`, `jest-snapshot`, `jest-environment-jsdom` todos `^29.2.1`). Fixar `jest@^29.7.0` e `@types/jest@^29` |
+
+> **Nunca resolver nada disso com `.npmrc` contendo `legacy-peer-deps=true`.** Isso
+> silencia *todos* os conflitos de peer dep do projeto, inclusive os que a gente vai
+> querer enxergar. Se aparecer um `.npmrc` desses, apague.
 
 > **`tailwindcss@^3.4.19` é obrigatório.** O `@latest` instala 4.x e quebra o preset do
 > NativeWind com erro de config difícil de diagnosticar.
+
+> **`tailwindcss@^3.4.19` é obrigatório.** O `@latest` instala 4.x e quebra o preset do
+> NativeWind com erro de config difícil de diagnosticar.
+
+> **`test-renderer`, não `react-test-renderer`.** O `@testing-library/react-native` v14
+> trocou de renderizador: seu peer é `test-renderer@^1.0.0` (que aceita `react@^19.0.0`).
+> O `react-test-renderer@^19.2.8` exige `react@^19.2.8` e colide com o `react@19.2.3` que
+> o Expo SDK 57 fixa — o `npm install` falha com ERESOLVE.
+>
+> **Não resolver isso com `.npmrc` contendo `legacy-peer-deps=true`.** Isso silencia
+> *todos* os conflitos de peer dep do projeto, inclusive os que a gente vai querer
+> enxergar. Se aparecer um `.npmrc` desses, apague.
 
 - [ ] **Step 3: Configurar `tsconfig.json`**
 
@@ -669,6 +712,23 @@ module.exports = {
 /// <reference types="nativewind/types" />
 ```
 
+`expo-env.d.ts` — **obrigatório, e é o que faz o import do CSS compilar**:
+
+```ts
+/// <reference types="expo/types" />
+
+// NOTE: This file should not be edited and should be committed with your source code.
+// It is generated by Expo.
+```
+
+> Sem esse arquivo, `import '../global.css'` quebra o `tsc` com
+> `TS2882: Cannot find module or type declarations for side-effect import of '../global.css'`.
+> Quem declara `declare module '*.css'` é `expo/types/global.d.ts`, e ele só entra no
+> programa TypeScript por esta referência. O `nativewind/types` **não** declara CSS — ele
+> só tipa a prop `className`. Normalmente o `expo start` gera esse arquivo sozinho; como
+> o `tsconfig.json` da Task 1 já o lista em `include` mas o scaffold não o criou, ele
+> precisa ser escrito à mão aqui.
+
 Em `metro.config.js`:
 
 ```js
@@ -770,9 +830,42 @@ A paleta de temperatura é **derivada** de `TEMPERATURE_BANDS`, não redigitada.
 do Step 2 nunca poderia falhar por divergência — e é exatamente esse o objetivo do
 desenho.
 
-- [ ] **Step 5: Rodar o teste dos tokens**
+- [ ] **Step 5: Amarrar a paleta do Tailwind ao domínio**
 
-Run: `npx jest src/core/ui/__tests__/theme.test.ts`
+`theme.ts` deriva a paleta de `TEMPERATURE_BANDS`, mas o `tailwind.config.js` é CJS e não
+consegue importar TypeScript sem tooling extra — então ali os hex ficam redigitados. São
+**duas superfícies** com a mesma cor, e sem guarda a segunda diverge em silêncio quando
+`TEMPERATURE_BANDS` mudar.
+
+`src/core/ui/__tests__/tailwind-palette.test.ts`:
+
+```ts
+import { TEMPERATURE_BANDS } from '@shared/constants';
+
+const tailwindConfig = require('../../../../tailwind.config.js');
+const temp = tailwindConfig.theme.extend.colors.temp as Record<string, string>;
+
+describe('paleta do tailwind.config.js', () => {
+  it('é idêntica à do domínio', () => {
+    for (const band of TEMPERATURE_BANDS) {
+      expect(temp[band.id]).toBe(band.color);
+    }
+  });
+
+  it('não tem nenhuma cor de temperatura a mais', () => {
+    expect(Object.keys(temp).sort()).toEqual(
+      TEMPERATURE_BANDS.map((b) => b.id).sort(),
+    );
+  });
+});
+```
+
+O segundo teste importa tanto quanto o primeiro: sem ele, uma faixa removida do domínio
+continuaria existindo como classe do Tailwind sem ninguém notar.
+
+- [ ] **Step 6: Rodar os testes dos tokens**
+
+Run: `npx jest src/core/ui/__tests__/`
 Expected: PASS
 
 - [ ] **Step 6: Escrever o teste do Button (que vai falhar)**
@@ -784,29 +877,29 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { Button } from '../Button';
 
 describe('Button', () => {
-  it('mostra o rótulo e dispara onPress', () => {
+  it('mostra o rótulo e dispara onPress', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} />);
-    fireEvent.press(screen.getByText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} />);
+    await fireEvent.press(screen.getByText('Continuar'));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it('não dispara onPress quando desabilitado', () => {
+  it('não dispara onPress quando desabilitado', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} disabled />);
-    fireEvent.press(screen.getByText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} disabled />);
+    await fireEvent.press(screen.getByText('Continuar'));
     expect(onPress).not.toHaveBeenCalled();
   });
 
-  it('não dispara onPress enquanto carrega', () => {
+  it('não dispara onPress enquanto carrega', async () => {
     const onPress = jest.fn();
-    render(<Button label="Continuar" onPress={onPress} loading />);
-    fireEvent.press(screen.getByLabelText('Continuar'));
+    await render(<Button label="Continuar" onPress={onPress} loading />);
+    await fireEvent.press(screen.getByLabelText('Continuar'));
     expect(onPress).not.toHaveBeenCalled();
   });
 
-  it('expõe papel e estado de acessibilidade', () => {
-    render(<Button label="Continuar" onPress={jest.fn()} disabled />);
+  it('expõe papel e estado de acessibilidade', async () => {
+    await render(<Button label="Continuar" onPress={jest.fn()} disabled />);
     const button = screen.getByLabelText('Continuar');
     expect(button.props.accessibilityRole).toBe('button');
     expect(button.props.accessibilityState.disabled).toBe(true);
@@ -895,6 +988,9 @@ export function Button({ label, onPress, variant = 'primary', disabled, loading 
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: blocked, busy: loading === true }}
+      // `disabled` nativo além da guarda em handlePress: sem ele o Pressable continua
+      // capturando o toque como gesture responder mesmo desabilitado.
+      disabled={blocked}
       onPress={handlePress}
       style={({ pressed }) => [
         styles.base,
@@ -963,19 +1059,19 @@ import { render, screen } from '@testing-library/react-native';
 import { XParceriaBar } from '../XParceriaBar';
 
 describe('XParceriaBar', () => {
-  it('mostra progresso contra o custo do nível atual', () => {
+  it('mostra progresso contra o custo do nível atual', async () => {
     // nível 18 exige 496 para o próximo (ver shared/level.ts)
-    render(<XParceriaBar level={18} xpIntoLevel={420} />);
+    await render(<XParceriaBar level={18} xpIntoLevel={420} />);
     expect(screen.getByText('420 / 496 XParceria')).toBeTruthy();
   });
 
-  it('nunca escreve a palavra "XP" sozinha na interface', () => {
-    render(<XParceriaBar level={3} xpIntoLevel={10} />);
+  it('nunca escreve a palavra "XP" sozinha na interface', async () => {
+    await render(<XParceriaBar level={3} xpIntoLevel={10} />);
     expect(screen.queryByText(/\bXP\b/)).toBeNull();
   });
 
-  it('expõe o progresso para leitores de tela', () => {
-    render(<XParceriaBar level={18} xpIntoLevel={420} />);
+  it('expõe o progresso para leitores de tela', async () => {
+    await render(<XParceriaBar level={18} xpIntoLevel={420} />);
     const bar = screen.getByLabelText('Progresso de XParceria');
     expect(bar.props.accessibilityValue).toEqual({ min: 0, max: 496, now: 420 });
   });
@@ -989,23 +1085,23 @@ import { render, screen } from '@testing-library/react-native';
 import { Avatar } from '../Avatar';
 
 describe('Avatar', () => {
-  it('mostra o emoji quando não há foto', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
+  it('mostra o emoji quando não há foto', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
     expect(screen.getByText('🦊')).toBeTruthy();
   });
 
-  it('esconde o emoji quando há foto', () => {
-    render(<Avatar photoURL="https://exemplo.com/a.jpg" fallbackEmoji="🦊" />);
+  it('esconde o emoji quando há foto', async () => {
+    await render(<Avatar photoURL="https://exemplo.com/a.jpg" fallbackEmoji="🦊" />);
     expect(screen.queryByText('🦊')).toBeNull();
   });
 
-  it('colore o anel pela faixa de temperatura', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" temperature={90} />);
+  it('colore o anel pela faixa de temperatura', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" temperature={90} />);
     expect(screen.getByLabelText('Parceria em chamas')).toBeTruthy();
   });
 
-  it('não desenha anel sem temperatura', () => {
-    render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
+  it('não desenha anel sem temperatura', async () => {
+    await render(<Avatar photoURL={null} fallbackEmoji="🦊" />);
     expect(screen.queryByLabelText(/^Parceria /)).toBeNull();
   });
 });
@@ -1015,6 +1111,45 @@ describe('Avatar', () => {
 
 Run: `npx jest src/core/ui/__tests__/`
 Expected: FAIL nos dois arquivos novos — módulos não encontrados.
+
+- [ ] **Step 2b: Mockar o `expo-image` (gap do `jest-expo@57.0.3`)**
+
+Qualquer suíte que importe `expo-image` **quebra ao carregar**, antes de rodar qualquer
+teste, com `TypeError: observe.getIntegrations is not a function`.
+
+A causa é upstream e verificável: `expo-image@57.0.2` chama `observe.getIntegrations()`
+no momento do import (`node_modules/expo-image/src/observe.ts:159`), mas o mock nativo de
+`ExpoObserve` que o `jest-expo@57.0.3` fornece só implementa `configure`,
+`dispatchEvents`, `setBundleDefaults` e `addListener` — `getIntegrations` não existe. Os
+dois pacotes são do mesmo SDK 57; é um descompasso entre eles, não erro nosso.
+
+`__mocks__/expo-image.js` na raiz do projeto:
+
+```js
+// Existe por um gap do jest-expo@57.0.3: o mock nativo de ExpoObserve não implementa
+// getIntegrations(), que o expo-image@57.0.2 chama no import (src/observe.ts:159).
+// Sem isso, toda suíte que importa expo-image quebra ao carregar.
+// REMOVER quando o jest-expo corrigir o mock — e conferir se o Avatar ainda passa.
+const React = require('react');
+const { Image: RNImage } = require('react-native');
+
+function Image(props) {
+  return React.createElement(RNImage, props);
+}
+
+module.exports = { Image, ImageBackground: Image };
+```
+
+Jest aplica `__mocks__/<pacote>.js` da raiz automaticamente para módulos de
+`node_modules`, sem precisar de `jest.mock()`.
+
+> **Por que mockar em vez de remendar o mock do `ExpoObserve`:** remendar dependeria da
+> estrutura interna do `jest-expo`, que muda entre versões. E o que o teste do `Avatar`
+> verifica é a **nossa** lógica — emoji quando não há foto, imagem quando há — não a
+> decodificação de imagem do `expo-image`. Mockar a fronteira é o certo aqui.
+>
+> **Não trocar por `Image` do `react-native`** no código de produção: o `expo-image` foi
+> escolhido pelo cache e desempenho. A troca vale só dentro do mock de teste.
 
 - [ ] **Step 3: Implementar `ProgressRing`**
 
@@ -1197,7 +1332,7 @@ Expected: imprime uma versão (ex.: `openjdk version "21..."`), não a mensagem
 
 - [ ] **Step 2: Criar o projeto no console do Firebase**
 
-Manual, no console: criar o projeto `parceria-dev`, habilitar **Authentication →
+Manual, no console: criar o projeto (ID real: **`parceria-db699`**), habilitar **Authentication →
 Email/Password** e criar o **Firestore** em modo de produção (as regras vêm da Task 6).
 Registrar um app **Web** (não iOS/Android — o JS SDK usa a config web) e copiar as
 credenciais.
@@ -1244,7 +1379,7 @@ echo ".env" >> .gitignore
 `.firebaserc`:
 
 ```json
-{ "projects": { "default": "parceria-dev" } }
+{ "projects": { "default": "parceria-db699" } }
 ```
 
 `firestore.indexes.json` (vazio por ora; os índices compostos chegam na Spec 3):
@@ -1308,6 +1443,53 @@ export function authErrorMessage(code: string): string {
   return MESSAGES[code] ?? 'Algo deu errado. Tenta de novo.';
 }
 ```
+
+- [ ] **Step 7b: Declarar `getReactNativePersistence` (augmentação de módulo)**
+
+`customConditions: ["react-native"]` no `tsconfig.json` **não basta** — descoberto em
+execução. O `exports` de `@firebase/auth@1.13.4` lista as chaves nesta ordem:
+
+```
+['types', 'node', 'react-native', 'cordova', 'webworker', 'browser', 'default']
+```
+
+A resolução condicional usa **a primeira chave que casa, na ordem do `package.json`** —
+e o TypeScript sempre casa `types`. Então ele para em `dist/auth-public.d.ts`, que não
+declara `getReactNativePersistence`, sem nunca chegar em `dist/rn/index.rn.d.ts`, que
+declara. Em runtime funciona (o Metro resolve pela condição `react-native`); só os tipos
+não enxergam. Já estamos na versão mais recente do `firebase` — não há upgrade que
+resolva.
+
+`types/firebase-auth.d.ts`:
+
+```ts
+// O exports de @firebase/auth lista "types" antes de "react-native", então o tsc para
+// em auth-public.d.ts e nunca vê getReactNativePersistence — que existe em runtime
+// (dist/rn/index.rn.d.ts) e é resolvido normalmente pelo Metro.
+// Declaramos aqui o que de fato existe. REMOVER quando o upstream reordenar as chaves.
+import type { Persistence, ReactNativeAsyncStorage } from 'firebase/auth';
+
+declare module 'firebase/auth' {
+  export function getReactNativePersistence(
+    storage: ReactNativeAsyncStorage,
+  ): Persistence;
+}
+```
+
+`Persistence` e `ReactNativeAsyncStorage` **já são exportados** pelos tipos padrão
+(`auth-public.d.ts:2399` e `:2748`) — só a função falta, então a augmentação é mínima e
+não reescreve nenhum tipo.
+
+> **Por que não `@ts-ignore` nem `as any`:** os dois desligam a checagem no ponto de uso e
+> apagariam um erro real se a assinatura mudasse. A augmentação declara exatamente o que
+> existe e continua verificando o argumento.
+>
+> **Por que não import de subpath profundo** (`firebase/auth/dist/rn/...`): amarra o
+> código a um caminho interno do pacote, que quebra em qualquer refatoração do upstream.
+>
+> **Nota sobre a versão do AsyncStorage:** com a v2 (que é a instalada, 2.2.0) o import é
+> default — `import AsyncStorage from '@react-native-async-storage/async-storage'`. A v3
+> mudou para `createAsyncStorage('app')`; se o pacote for atualizado, este ponto muda.
 
 - [ ] **Step 8: Implementar o cliente**
 
@@ -1539,7 +1721,6 @@ describe('users — NEGADO', () => {
   it('ninguém apaga perfil pelo cliente', async () => {
     const db = env.authenticatedContext(ALICE).firestore();
     await setDoc(doc(db, 'users', ALICE), validProfile(ALICE, 'alice'));
-    const { deleteDoc } = await import('firebase/firestore');
     await assertFails(deleteDoc(doc(db, 'users', ALICE)));
   });
 });
@@ -1553,7 +1734,10 @@ Estas coleções ainda não têm funcionalidade — mas a porta fecha agora.
 
 ```ts
 import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+// Imports estáticos: `await import()` dinâmico quebra neste projeto com
+// `TypeError: A dynamic import callback was invoked without --experimental-vm-modules`
+// (Babel/Jest rodam em CJS). Vale para todas as suítes de rules.
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { ALICE, BOB, CAROL, createTestEnv } from './helpers';
 
 let env: RulesTestEnvironment;
@@ -1597,7 +1781,6 @@ describe('partnerships — só Cloud Function escreve', () => {
       });
     });
     const db = env.authenticatedContext(ALICE).firestore();
-    const { updateDoc } = await import('firebase/firestore');
     await assertFails(updateDoc(doc(db, 'partnerships', `${ALICE}_${BOB}`), { xparceria: 999999 }));
   });
 
@@ -1634,13 +1817,41 @@ describe('presence — visibleTo é a única porta', () => {
     await assertFails(setDoc(doc(db, 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] }));
   });
 
-  it('NEGA o próprio dono se auto-adicionar ao visibleTo alheio', async () => {
+  it('NEGA um estranho se adicionar ao visibleTo alheio', async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [] });
     });
     const db = env.authenticatedContext(CAROL).firestore();
-    const { updateDoc } = await import('firebase/firestore');
     await assertFails(updateDoc(doc(db, 'presence', ALICE), { visibleTo: [CAROL] }));
+  });
+
+  // ⭐ O teste mais importante do produto: nem o DONO pode mexer no próprio visibleTo.
+  // Sem ele, `allow update: if isOwner(uid)` sozinho passaria na suíte inteira — e
+  // qualquer um se adicionaria à própria lista de visibilidade para ler quem quisesse.
+  it('NEGA o próprio dono alterar o próprio visibleTo', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [] });
+    });
+    const db = env.authenticatedContext(ALICE).firestore();
+    await assertFails(updateDoc(doc(db, 'presence', ALICE), { visibleTo: [CAROL] }));
+  });
+
+  it('permite o dono atualizar a localização mantendo o visibleTo', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] });
+    });
+    const db = env.authenticatedContext(ALICE).firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, 'presence', ALICE), { visibleTo: [BOB], isStale: false }),
+    );
+  });
+
+  it('NEGA anônimo ler presença', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] });
+    });
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, 'presence', ALICE)));
   });
 
   it('o dono escreve a própria localização', async () => {
@@ -1695,6 +1906,78 @@ it('NEGA anônimo reivindicar', async () => {
   await assertFails(setDoc(doc(db, 'handles', 'gabriel'), { uid: ALICE }));
 });
 ```
+
+- [ ] **Step 5b: Escrever os testes de `invites`**
+
+`tests/rules/invites.test.ts`:
+
+```ts
+import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { ALICE, BOB, createTestEnv } from './helpers';
+
+let env: RulesTestEnvironment;
+
+beforeAll(async () => { env = await createTestEnv(); });
+afterAll(async () => { await env.cleanup(); });
+beforeEach(async () => { await env.clearFirestore(); });
+
+function invite(fromUid: string) {
+  return {
+    code: 'ABC12345',
+    fromUid,
+    fromProfile: { displayName: 'Alguém', photoURL: null },
+    status: 'pending',
+    maxUses: 1,
+    usedBy: null,
+  };
+}
+
+it('cria convite em nome próprio', async () => {
+  const db = env.authenticatedContext(ALICE).firestore();
+  await assertSucceeds(setDoc(doc(db, 'invites', 'ABC12345'), invite(ALICE)));
+});
+
+it('NEGA criar convite em nome de outro', async () => {
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertFails(setDoc(doc(db, 'invites', 'ABC12345'), invite(ALICE)));
+});
+
+it('autenticado lê convite (precisa disso para aceitar)', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertSucceeds(getDoc(doc(db, 'invites', 'ABC12345')));
+});
+
+it('NEGA anônimo ler convite', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.unauthenticatedContext().firestore();
+  await assertFails(getDoc(doc(db, 'invites', 'ABC12345')));
+});
+
+it('NEGA marcar convite como usado pelo cliente', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertFails(updateDoc(doc(db, 'invites', 'ABC12345'), { usedBy: BOB, status: 'accepted' }));
+});
+
+it('NEGA apagar convite', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(ALICE).firestore();
+  await assertFails(deleteDoc(doc(db, 'invites', 'ABC12345')));
+});
+```
+
+O `update` negado é o que importa: aceitar convite é operação de Cloud Function (Spec 2).
+Se o cliente pudesse marcar `usedBy`, ele criaria parceria sem passar pelo servidor.
 
 - [ ] **Step 6: Rodar e ver falhar**
 
@@ -1885,26 +2168,29 @@ function Probe() {
 beforeEach(() => { listeners.length = 0; });
 
 describe('AuthProvider', () => {
-  it('começa em loading', () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+  it('começa em loading', async () => {
+    await render(<AuthProvider><Probe /></AuthProvider>);
     expect(screen.getByText('loading:none')).toBeTruthy();
   });
 
   it('vai para signedOut quando não há sessão', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     listeners[0]!(null);
     await waitFor(() => expect(screen.getByText('signedOut:none')).toBeTruthy());
   });
 
   it('vai para signedIn e expõe o uid', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     listeners[0]!({ uid: 'alice-uid' });
     await waitFor(() => expect(screen.getByText('signedIn:alice-uid')).toBeTruthy());
   });
 
-  it('useAuth fora do provider dá erro claro', () => {
+  it('useAuth fora do provider dá erro claro', async () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => render(<Probe />)).toThrow('useAuth precisa estar dentro de AuthProvider');
+    // render é assíncrono: o erro chega como rejeição, não como throw síncrono
+    await expect(render(<Probe />)).rejects.toThrow(
+      'useAuth precisa estar dentro de AuthProvider',
+    );
     spy.mockRestore();
   });
 });
@@ -2001,25 +2287,25 @@ beforeEach(() => signIn.mockReset());
 describe('SignInScreen', () => {
   it('envia e-mail e senha', async () => {
     signIn.mockResolvedValue(undefined);
-    render(<SignInScreen />);
-    fireEvent.changeText(screen.getByLabelText('E-mail'), 'gabriel@exemplo.com');
-    fireEvent.changeText(screen.getByLabelText('Senha'), 'segredo123');
-    fireEvent.press(screen.getByLabelText('Entrar'));
+    await render(<SignInScreen />);
+    await fireEvent.changeText(screen.getByLabelText('E-mail'), 'gabriel@exemplo.com');
+    await fireEvent.changeText(screen.getByLabelText('Senha'), 'segredo123');
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     await waitFor(() => expect(signIn).toHaveBeenCalledWith('gabriel@exemplo.com', 'segredo123'));
   });
 
   it('mostra a mensagem traduzida quando o Firebase recusa', async () => {
     signIn.mockRejectedValue({ code: 'auth/invalid-credential' });
-    render(<SignInScreen />);
-    fireEvent.changeText(screen.getByLabelText('E-mail'), 'a@b.com');
-    fireEvent.changeText(screen.getByLabelText('Senha'), 'errada');
-    fireEvent.press(screen.getByLabelText('Entrar'));
+    await render(<SignInScreen />);
+    await fireEvent.changeText(screen.getByLabelText('E-mail'), 'a@b.com');
+    await fireEvent.changeText(screen.getByLabelText('Senha'), 'errada');
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     await waitFor(() => expect(screen.getByText('E-mail ou senha incorretos.')).toBeTruthy());
   });
 
-  it('não chama signIn com campos vazios', () => {
-    render(<SignInScreen />);
-    fireEvent.press(screen.getByLabelText('Entrar'));
+  it('não chama signIn com campos vazios', async () => {
+    await render(<SignInScreen />);
+    await fireEvent.press(screen.getByLabelText('Entrar'));
     expect(signIn).not.toHaveBeenCalled();
   });
 });
@@ -2100,7 +2386,14 @@ export function SignInScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: theme.space[5], gap: theme.space[3] },
-  title: { ...theme.type.title, color: theme.colors.ink[900], marginBottom: theme.space[4] },
+  // Campos explícitos em vez de `...theme.type.title`: espalhar o token inteiro quebra o
+  // tsc, porque `fontWeight` vem como `string` e não como o literal que TextStyle exige.
+  title: {
+    fontSize: theme.type.title.fontSize,
+    fontWeight: '700',
+    color: theme.colors.ink[900],
+    marginBottom: theme.space[4],
+  },
   input: {
     minHeight: 52,
     borderRadius: theme.radius.md,
@@ -2527,7 +2820,14 @@ export function ProfileSetupScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: theme.space[5], gap: theme.space[3] },
-  title: { ...theme.type.title, color: theme.colors.ink[900], marginBottom: theme.space[4] },
+  // Campos explícitos em vez de `...theme.type.title`: espalhar o token inteiro quebra o
+  // tsc, porque `fontWeight` vem como `string` e não como o literal que TextStyle exige.
+  title: {
+    fontSize: theme.type.title.fontSize,
+    fontWeight: '700',
+    color: theme.colors.ink[900],
+    marginBottom: theme.space[4],
+  },
   avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space[2], marginBottom: theme.space[4] },
   input: {
     minHeight: 52,
