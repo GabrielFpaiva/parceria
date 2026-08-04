@@ -1721,7 +1721,6 @@ describe('users — NEGADO', () => {
   it('ninguém apaga perfil pelo cliente', async () => {
     const db = env.authenticatedContext(ALICE).firestore();
     await setDoc(doc(db, 'users', ALICE), validProfile(ALICE, 'alice'));
-    const { deleteDoc } = await import('firebase/firestore');
     await assertFails(deleteDoc(doc(db, 'users', ALICE)));
   });
 });
@@ -1735,7 +1734,10 @@ Estas coleções ainda não têm funcionalidade — mas a porta fecha agora.
 
 ```ts
 import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+// Imports estáticos: `await import()` dinâmico quebra neste projeto com
+// `TypeError: A dynamic import callback was invoked without --experimental-vm-modules`
+// (Babel/Jest rodam em CJS). Vale para todas as suítes de rules.
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { ALICE, BOB, CAROL, createTestEnv } from './helpers';
 
 let env: RulesTestEnvironment;
@@ -1779,7 +1781,6 @@ describe('partnerships — só Cloud Function escreve', () => {
       });
     });
     const db = env.authenticatedContext(ALICE).firestore();
-    const { updateDoc } = await import('firebase/firestore');
     await assertFails(updateDoc(doc(db, 'partnerships', `${ALICE}_${BOB}`), { xparceria: 999999 }));
   });
 
@@ -1816,13 +1817,41 @@ describe('presence — visibleTo é a única porta', () => {
     await assertFails(setDoc(doc(db, 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] }));
   });
 
-  it('NEGA o próprio dono se auto-adicionar ao visibleTo alheio', async () => {
+  it('NEGA um estranho se adicionar ao visibleTo alheio', async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [] });
     });
     const db = env.authenticatedContext(CAROL).firestore();
-    const { updateDoc } = await import('firebase/firestore');
     await assertFails(updateDoc(doc(db, 'presence', ALICE), { visibleTo: [CAROL] }));
+  });
+
+  // ⭐ O teste mais importante do produto: nem o DONO pode mexer no próprio visibleTo.
+  // Sem ele, `allow update: if isOwner(uid)` sozinho passaria na suíte inteira — e
+  // qualquer um se adicionaria à própria lista de visibilidade para ler quem quisesse.
+  it('NEGA o próprio dono alterar o próprio visibleTo', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [] });
+    });
+    const db = env.authenticatedContext(ALICE).firestore();
+    await assertFails(updateDoc(doc(db, 'presence', ALICE), { visibleTo: [CAROL] }));
+  });
+
+  it('permite o dono atualizar a localização mantendo o visibleTo', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] });
+    });
+    const db = env.authenticatedContext(ALICE).firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, 'presence', ALICE), { visibleTo: [BOB], isStale: false }),
+    );
+  });
+
+  it('NEGA anônimo ler presença', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'presence', ALICE), { uid: ALICE, visibleTo: [BOB] });
+    });
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, 'presence', ALICE)));
   });
 
   it('o dono escreve a própria localização', async () => {
@@ -1877,6 +1906,78 @@ it('NEGA anônimo reivindicar', async () => {
   await assertFails(setDoc(doc(db, 'handles', 'gabriel'), { uid: ALICE }));
 });
 ```
+
+- [ ] **Step 5b: Escrever os testes de `invites`**
+
+`tests/rules/invites.test.ts`:
+
+```ts
+import { assertFails, assertSucceeds, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { ALICE, BOB, createTestEnv } from './helpers';
+
+let env: RulesTestEnvironment;
+
+beforeAll(async () => { env = await createTestEnv(); });
+afterAll(async () => { await env.cleanup(); });
+beforeEach(async () => { await env.clearFirestore(); });
+
+function invite(fromUid: string) {
+  return {
+    code: 'ABC12345',
+    fromUid,
+    fromProfile: { displayName: 'Alguém', photoURL: null },
+    status: 'pending',
+    maxUses: 1,
+    usedBy: null,
+  };
+}
+
+it('cria convite em nome próprio', async () => {
+  const db = env.authenticatedContext(ALICE).firestore();
+  await assertSucceeds(setDoc(doc(db, 'invites', 'ABC12345'), invite(ALICE)));
+});
+
+it('NEGA criar convite em nome de outro', async () => {
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertFails(setDoc(doc(db, 'invites', 'ABC12345'), invite(ALICE)));
+});
+
+it('autenticado lê convite (precisa disso para aceitar)', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertSucceeds(getDoc(doc(db, 'invites', 'ABC12345')));
+});
+
+it('NEGA anônimo ler convite', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.unauthenticatedContext().firestore();
+  await assertFails(getDoc(doc(db, 'invites', 'ABC12345')));
+});
+
+it('NEGA marcar convite como usado pelo cliente', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(BOB).firestore();
+  await assertFails(updateDoc(doc(db, 'invites', 'ABC12345'), { usedBy: BOB, status: 'accepted' }));
+});
+
+it('NEGA apagar convite', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'invites', 'ABC12345'), invite(ALICE));
+  });
+  const db = env.authenticatedContext(ALICE).firestore();
+  await assertFails(deleteDoc(doc(db, 'invites', 'ABC12345')));
+});
+```
+
+O `update` negado é o que importa: aceitar convite é operação de Cloud Function (Spec 2).
+Se o cliente pudesse marcar `usedBy`, ele criaria parceria sem passar pelo servidor.
 
 - [ ] **Step 6: Rodar e ver falhar**
 
