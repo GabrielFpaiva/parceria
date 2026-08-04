@@ -2386,7 +2386,14 @@ export function SignInScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: theme.space[5], gap: theme.space[3] },
-  title: { ...theme.type.title, color: theme.colors.ink[900], marginBottom: theme.space[4] },
+  // Campos explícitos em vez de `...theme.type.title`: espalhar o token inteiro quebra o
+  // tsc, porque `fontWeight` vem como `string` e não como o literal que TextStyle exige.
+  title: {
+    fontSize: theme.type.title.fontSize,
+    fontWeight: '700',
+    color: theme.colors.ink[900],
+    marginBottom: theme.space[4],
+  },
   input: {
     minHeight: 52,
     borderRadius: theme.radius.md,
@@ -2813,7 +2820,14 @@ export function ProfileSetupScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', padding: theme.space[5], gap: theme.space[3] },
-  title: { ...theme.type.title, color: theme.colors.ink[900], marginBottom: theme.space[4] },
+  // Campos explícitos em vez de `...theme.type.title`: espalhar o token inteiro quebra o
+  // tsc, porque `fontWeight` vem como `string` e não como o literal que TextStyle exige.
+  title: {
+    fontSize: theme.type.title.fontSize,
+    fontWeight: '700',
+    color: theme.colors.ink[900],
+    marginBottom: theme.space[4],
+  },
   avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space[2], marginBottom: theme.space[4] },
   input: {
     minHeight: 52,
