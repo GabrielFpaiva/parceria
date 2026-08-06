@@ -133,16 +133,23 @@ próxima edição. É uma janela pequena, num evento raro, com dado cosmético �
   fromUid: string;
   fromProfile: { displayName: string; photoURL: string | null; avatarEmoji: string; handle: string };
   createdAt: Timestamp;      // == request.time, imposto pela regra
-  expiresAt: Timestamp;      // createdAt + 7 dias, imposto pela regra
   usedBy: string | null;
   status: 'pending' | 'accepted';
   maxUses: 1;
 }
 ```
 
-`'expired'` **não é persistido** — é derivado de `expiresAt < now` na leitura e imposto
-pela regra no aceite. Sem job agendado, um status persistido ficaria mentindo até alguém
-rodar a limpeza. O valor `'expired'` sai do campo `status` previsto no §7.
+**Não existe campo `expiresAt`,** e a razão é uma armadilha que só aparece ao escrever a
+regra: o cliente não sabe o valor de `request.time` antes do commit, então não consegue
+gravar `createdAt + 7d` de um jeito que a regra possa conferir. Deixar o campo livre
+criaria o convite que nunca expira — o abuso mais óbvio possível.
+
+O vencimento é **derivado** de `createdAt + 7 dias`, no cliente e na regra. Um campo a
+menos e nada a forjar.
+
+`'expired'` também não é persistido, pelo mesmo espírito: sem job agendado, um status
+gravado ficaria mentindo até alguém rodar a limpeza. O valor `'expired'` sai do campo
+`status` previsto no §7.
 
 O alfabeto sem `I`, `L`, `O` e `U` existe porque o código será **digitado à mão** e lido
 em voz alta no WhatsApp. `1/I/l` e `0/O` são a maior fonte de erro de digitação; `U` sai
@@ -201,8 +208,8 @@ id mantém a cerimônia inteira sem antecipar o sistema.
 
 `partnerships/{pid}/events/{eventId}`, append-only.
 
-O evento de nascimento tem **id fixo `born`**. Isso o torna idempotente, o que a §4.3
-exige. Os demais têm id automático.
+O evento de nascimento tem **id fixo `born`**, o que torna a escrita idempotente. Os
+demais têm id automático.
 
 | Evento | `xpAwarded` |
 |---|---|
@@ -243,7 +250,7 @@ function inviteAuthorizes(code, inviterUid, accepterUid) {
       && inv.fromUid != accepterUid
       && inv.usedBy == null
       && inv.status == 'pending'
-      && inv.expiresAt > request.time;
+      && inv.createdAt + duration.value(7, 'd') > request.time;
 }
 ```
 
@@ -256,23 +263,29 @@ estado **anterior** à transação, então `usedBy == null` vale para as duas. D
 simultâneos: as duas transações escrevem o mesmo documento de convite, o Firestore aborta
 uma. Sem parceria duplicada, sem convite reutilizado.
 
-### 4.3 A birth em duas fases
+### 4.3 A birth cabe numa transação só — graças a `getAfter()`
 
-Dentro de uma transação, `get()` numa regra enxerga o estado **anterior** à transação.
-A parceria que está sendo criada ainda não existe para a regra do evento — que precisa
-verificar se quem escreve é membro. Escrever os dois na mesma transação é impossível.
+Há uma armadilha aqui, e a saída dela é uma função pouco conhecida.
 
-Portanto:
+Numa transação, `get()` dentro de uma regra enxerga o estado **anterior** à transação.
+A regra do evento precisa verificar se quem escreve é membro da parceria — mas no
+nascimento a parceria está sendo criada na mesma transação, e para o `get()` ela ainda
+não existe. A verificação falharia sempre.
 
-1. **Transação:** cria `partnerships/{pid}` e marca `invites/{code}` como usado.
-2. **Escrita seguinte:** cria `partnerships/{pid}/events/born`.
+A documentação do Firestore resolve isso explicitamente: *"For writes, you can use the
+`getAfter()` function to access the state of a document after a transaction or batch of
+writes completes but before the transaction or batch commits."*
 
-Se a segunda falhar, a parceria existe sem o evento de nascimento na timeline. O id
-fixo `born` torna a escrita idempotente, e o cliente a repete ao abrir a parceria. A
-alternativa — recusar a parceria porque o evento falhou — seria pior.
+Então a regra do evento usa `getAfter()`, e **tudo cabe numa transação**: cria a
+parceria, cria `events/born`, marca o convite como usado. Ou nasce inteira, ou não
+nasce.
 
-Pausar, retomar e encerrar não têm esse problema: a parceria já existe, e o `get()` da
-regra do evento a enxerga. Vão em lote único.
+O orçamento de chamadas fecha com folga. O limite documentado é *"10 for
+single-document requests"* e *"20 for multi-document reads, transactions, and batched
+writes"*: três escritas com no máximo duas consultas cada dão 6.
+
+O evento de nascimento mantém o id fixo `born` mesmo assim — custa nada e deixa a
+escrita idempotente caso um dia seja preciso repeti-la.
 
 ### 4.4 `visibleTo` sai da Spec 2
 
@@ -331,8 +344,6 @@ match /invites/{code} {
                 && request.resource.data.status == 'pending'
                 && request.resource.data.maxUses == 1
                 && request.resource.data.createdAt == request.time
-                && request.resource.data.expiresAt
-                     == request.time + duration.value(7, 'd')
                 && matchesOwnProfile(request.resource.data.fromProfile);
 
   // Só a transição pendente → usado, e só por quem não é o dono.
@@ -401,8 +412,15 @@ ramo é como se abre um buraco sem perceber.
 ### 5.4 `partnerships/{pid}/events/{id}`
 
 ```js
+// Leitura olha o estado atual; escrita olha o estado pós-transação, para que
+// o evento de nascimento possa ser gravado junto com a parceria (§4.3).
+function isMemberAfter(pid) {
+  return isSignedIn() && request.auth.uid in
+    getAfter(/databases/$(database)/documents/partnerships/$(pid)).data.members;
+}
+
 allow read:   if isMember(partnership(pid));
-allow create: if isMember(partnership(pid))
+allow create: if isMemberAfter(pid)
               && request.resource.data.occurredAt == request.time
               && lifecycleEventXp(request.resource.data.type)
                    == request.resource.data.xpAwarded;
@@ -542,7 +560,7 @@ Além dos 38 testes da Spec 1, cerca de 40 casos novos:
 
 | Grupo | Casos |
 |---|---|
-| `invites` | criar com `fromUid` alheio · forjar `fromProfile` · `expiresAt` fora dos 7 dias · `usedBy` preenchido no create · `list` da coleção · marcar como usado sendo o dono · alterar campo fora de `{usedBy, status}` · delete |
+| `invites` | criar com `fromUid` alheio · forjar `fromProfile` · `createdAt` no futuro · `usedBy` preenchido no create · `list` da coleção · marcar como usado sendo o dono · alterar campo fora de `{usedBy, status}` · delete |
 | `partnerships` create | sem convite · convite de terceiro · convite expirado · convite já usado · `createdBy` sendo o próprio · não estar em `members` · `pid` fora de ordem · `members` com 1 ou 3 uids · **cada** literal forjado (`xparceria`, `level`, `xpIntoLevel`, `xpForNextLevel`, `temperature`, `temperatureBand`, `achievements`, `streak`, `stats`, `superPartnershipId`, `createdAt`) |
 | `partnerships` update | não-membro mudando status · transição proibida (`ended→active` pelo ramo de ciclo de vida) · mexer em `xparceria` junto com `status` · alterar `memberProfiles` do outro · reativação sem convite válido |
 | `events` | não-membro lendo · membro escrevendo `encounter` · `xpAwarded` errado em `partnership_born` · `occurredAt` no passado · update e delete |
@@ -579,7 +597,7 @@ Nada mais. O projeto continua inteiramente no plano Spark.
 | **Regras carregam a garantia sozinhas** | Mitigado pela suíte de ~40 negações com mutação. É o custo real de não ter servidor, e é onde a revisão deve gastar tempo |
 | **Spec 1 nunca foi aberta num celular** | Decisão do Gabriel: verificar no aceite final da Spec 2. Concentra as surpresas de runtime (Reanimated, gesture-handler, worklets) num só momento, e a cerimônia é animação de tela cheia |
 | Convite por código é mais friccional que link | Aceito — a alternativa depende de comportamento que a doc do Expo chama de indefinido. Medir a conversão no teste de campo |
-| Evento de nascimento pode faltar por um instante | Id fixo `born` torna a escrita idempotente e o cliente a repete |
+| `getAfter()` é caminho menos batido que `get()` | Documentado e suportado pelo emulador, mas a suíte precisa provar o nascimento inteiro numa transação antes de qualquer tela existir |
 | `memberProfiles` stale após edição de perfil | Janela pequena, evento raro, dado cosmético. Autocorrige na próxima edição |
 | Spec 4 sem servidor | Endereçado na §7: decaimento preguiçoso remove a necessidade do job |
 
