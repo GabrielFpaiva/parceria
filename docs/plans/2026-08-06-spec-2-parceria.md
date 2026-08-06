@@ -738,8 +738,11 @@ describe('invites — create', () => {
   });
 
   it('NEGA criar convite em nome de outra pessoa', async () => {
+    // Uma variável só: o fromProfile continua sendo o da Alice, então a
+    // negação prova `isOwner(fromUid)` e não `matchesOwnProfile`. Trocar os
+    // dois de uma vez faria o teste passar por qualquer um dos dois motivos.
     const alice = env.authenticatedContext(ALICE).firestore();
-    await assertFails(alice.doc('invites/AB3D4F7H').set(validInvite(BOB)));
+    await assertFails(alice.doc('invites/AB3D4F7H').set(validInvite(ALICE, { fromUid: BOB })));
   });
 
   it('NEGA forjar o displayName no fromProfile', async () => {
@@ -2083,7 +2086,6 @@ describe('reativação', () => {
     const second = await aliceInvites();
     await acceptInvite(dbOf(BOB), second, { uid: BOB, profile: profileOf(BOB) });
 
-    const { getDocs, collection, query, where } = await import('firebase/firestore');
     const evs = await getDocs(
       query(collection(dbOf(BOB), `partnerships/${PID}/events`), where('type', '==', 'partnership_resumed')),
     );
@@ -2093,7 +2095,7 @@ describe('reativação', () => {
 });
 ```
 
-> O `await import()` acima é a exceção que confirma a regra: em teste de emulador rodando via `babel-jest` ele funciona. Se der problema, mova para import estático no topo.
+Acrescente `collection`, `getDocs`, `query` e `where` ao import estático de `firebase/firestore` no topo do arquivo. **Nada de `await import()`** — é constraint global, e Jest roda em CJS.
 
 - [ ] **Step 2: Rodar e ver falhar**
 
