@@ -14,40 +14,47 @@ system, security rules) e é pré-requisito das Specs 3 (mapa) e 4 (progressão)
 
 Referência: `docs/2026-08-03-parceria-design.md`, §4 (Atos I e II), §5, §6, §7, §19.
 
+> **Sem Cloud Functions.** O plano Blaze recusou o cartão, e a validação com amigos não
+> pode esperar faturamento. Toda a escrita acontece no cliente, dentro de transações do
+> Firestore, e **as security rules são o servidor**: cada valor em que o cliente não pode
+> ser confiado é fixado por regra, e cada regra tem um teste que a mostra negando.
+> A §4 explica o que esse desenho garante e o que ele não garante.
+
 ---
 
 ## 1. O que esta spec entrega
 
 | # | Entrega |
 |---|---|
-| 1 | `createInvite` — código de 8 caracteres, 7 dias, uso único |
+| 1 | Criação de convite — código de 8 caracteres, 7 dias, uso único |
 | 2 | Landing estática no Firebase Hosting, com preview rico para o WhatsApp |
 | 3 | Onboarding com primeiro convite (Ato I) e tela de espera com preview animado |
-| 4 | Entrada por código no app + `previewInvite` |
-| 5 | `acceptInvite` — nascimento atômico da parceria |
+| 4 | Entrada por código no app + tela de aceite com o perfil de quem convidou |
+| 5 | Aceite — nascimento da parceria numa transação, com valores fixados por regra |
 | 6 | Cerimônia de nascimento, simultânea nos dois aparelhos |
 | 7 | Lista de parcerias e visão geral da parceria |
-| 8 | `pausePartnership`, `resumePartnership`, `endPartnership` |
-| 9 | `onUserProfileWrite` — propagação de `memberProfiles` |
-| 10 | Ponte `onSnapshot → React Query` (`useFirestoreDoc` / `useFirestoreCollection`) |
-| 11 | Extensão da suíte de negação das rules + suíte de fraude das callables |
+| 8 | Pausar, retomar e encerrar |
+| 9 | Propagação de perfil para `memberProfiles`, feita pelo dono do perfil |
+| 10 | Ponte `onSnapshot` → React Query (`useFirestoreDoc` / `useFirestoreCollection`) |
+| 11 | Suíte de negação das rules, cobrindo cada campo fixado |
 
 ### Fora de escopo
 
 | Item | Onde entra |
 |---|---|
+| `visibleTo` / presença | **Spec 3** — ver §4.4 |
 | Hibernação (`hibernating`) | Spec 4 — depende do motor de temperatura |
 | Mapa, marcadores, escrita de localização | Spec 3 |
 | Emoji diário, handshake de encontro, timeline visual | Spec 4 |
 | Catálogo de conquistas | Spec 5 |
-| Job agendado (decaimento, limpeza de convites) | Spec 4 |
 | Push remota | V1 (dev build) |
 
 ---
 
 ## 2. Decisões que se afastam do documento de produto
 
-Três, todas verificadas contra documentação oficial antes de virarem decisão.
+Cinco. As três primeiras foram verificadas contra documentação oficial; as duas últimas
+são consequência de não haver servidor.
 
 ### 2.1 `pending` não existe como documento de parceria
 
@@ -55,8 +62,8 @@ O §5 desenha `PENDING → ACTIVE`, mas o `pid` é `[uidA, uidB].sort().join('_'
 segundo uid só existe no instante do aceite. Não há documento a criar antes disso.
 
 **O `invites/{code}` é o estado pendente.** A parceria nasce já `active`, e `'pending'`
-sai do union `PartnershipStatus` em `shared/types.ts`. Efeito colateral bem-vindo:
-convite nunca aceito não deixa parceria fantasma para limpar.
+sai do union `PartnershipStatus`. Efeito colateral bem-vindo: convite nunca aceito não
+deixa parceria fantasma para limpar.
 
 ### 2.2 Deep link deixa de ser o caminho primário do convite
 
@@ -70,30 +77,49 @@ comportamento indefinido. Então:
 
 - **Primário:** código de 8 caracteres, digitado na tela "Tenho um convite".
 - **Contexto:** landing https estática, que é o que aparece com preview no WhatsApp.
-- **Bônus:** a rota `invite/[code]` também responde a `exp://.../--/invite/CODE` quando
-  o link funcionar. Nada depende disso.
+  Hosting está no plano gratuito — não depende do Blaze.
+- **Bônus:** a rota `invite/[code]` também atende `exp://.../--/invite/CODE` quando o
+  link funcionar. Nada depende disso.
 
-Deep link de verdade (Universal Links / App Links) entra no V1, junto com o dev build.
+Deep link de verdade (Universal Links / App Links) entra no V1, com o dev build.
 
 ### 2.3 Reaceite reativa a parceria encerrada
 
 `endPartnership` marca `ended`, e o `pid` determinístico significaria que duas pessoas
 que encerraram nunca mais poderiam ser parceiras. Como *"XParceria nunca é perdido"* é
-princípio fundador (§11), `acceptInvite` sobre uma parceria `ended`:
+princípio fundador (§11), aceitar um convite sobre uma parceria `ended`:
 
 - reativa **o mesmo documento** — XParceria, nível, conquistas e timeline intactos;
 - reseta `temperature` para `TEMPERATURE.INITIAL`;
 - **não** concede os +100 de novo;
-- volta a contar em `stats.partnershipCount` dos dois (o encerramento havia decrementado);
 - grava evento `partnership_resumed`.
 
-Parceria já `active` ou `paused` → recusa. Retomar uma pausa é `resumePartnership`, não
-convite.
+Parceria já `active` ou `paused` → recusa. Retomar uma pausa não é convite.
 
-Quatro membros novos no union `EventType` de `shared/types.ts`:
-`partnership_paused`, `partnership_resumed`, `partnership_ended` — e
-`partnership_born`, que o doc de produto já previa. `streak.lastDay` também precisa
-aceitar `null`: no nascimento não existe dia anterior.
+Quatro membros novos no union `EventType` de `shared/types.ts`: `partnership_born`,
+`partnership_paused`, `partnership_resumed`, `partnership_ended`. `streak.lastDay`
+também passa a aceitar `null`: no nascimento não existe dia anterior.
+
+### 2.4 `users.stats` deixa de ser escrito e passa a ser derivado
+
+O §7 guarda `stats.partnershipCount` e `stats.totalXParceria` no documento do usuário.
+Sem servidor isso é impossível de manter: quem aceita o convite **não pode escrever no
+documento do outro**, e afrouxar essa regra deixaria qualquer pessoa reescrever os stats
+de qualquer pessoa — hipótese pior que o problema que resolve.
+
+**Os campos continuam existindo, congelados em zero e imutáveis pela regra que a Spec 1
+já escreveu.** A tela de perfil (Spec 4) calcula os números a partir da lista de
+parcerias, que o cliente já carrega inteira. Denormalizar volta a fazer sentido quando
+houver servidor, e aí é uma migração de uma função.
+
+### 2.5 A propagação de `memberProfiles` é feita pelo dono do perfil
+
+Sem trigger, quem edita o perfil atualiza `memberProfiles[próprioUid]` em cada uma das
+suas parcerias, em lote, logo após salvar. A regra permite alterar **apenas a própria
+chave**.
+
+Se o app morrer no meio do lote, alguma parceria fica com nome ou foto velhos até a
+próxima edição. É uma janela pequena, num evento raro, com dado cosmético — aceito.
 
 ---
 
@@ -106,22 +132,24 @@ aceitar `null`: no nascimento não existe dia anterior.
   code: string;              // 8 chars, base32 Crockford sem I, L, O, U
   fromUid: string;
   fromProfile: { displayName: string; photoURL: string | null; avatarEmoji: string; handle: string };
-  createdAt: Timestamp;
-  expiresAt: Timestamp;      // createdAt + 7 dias
+  createdAt: Timestamp;      // == request.time, imposto pela regra
+  expiresAt: Timestamp;      // createdAt + 7 dias, imposto pela regra
   usedBy: string | null;
   status: 'pending' | 'accepted';
   maxUses: 1;
 }
 ```
 
-`'expired'` **não é persistido** — é derivado de `expiresAt < now` na leitura e no
-aceite. Sem scheduled function nesta spec, um status persistido ficaria mentindo até
-alguém rodar um job. O campo `status` existente no §7 do doc de produto perde o valor
-`'expired'` por esse motivo.
+`'expired'` **não é persistido** — é derivado de `expiresAt < now` na leitura e imposto
+pela regra no aceite. Sem job agendado, um status persistido ficaria mentindo até alguém
+rodar a limpeza. O valor `'expired'` sai do campo `status` previsto no §7.
 
 O alfabeto sem `I`, `L`, `O` e `U` existe porque o código será **digitado à mão** e lido
 em voz alta no WhatsApp. `1/I/l` e `0/O` são a maior fonte de erro de digitação; `U` sai
-para reduzir a chance de o gerador produzir palavras ofensivas por acaso.
+para reduzir a chance de o gerador formar palavras infelizes.
+
+**Não há teto de convites pendentes.** Regras não sabem contar. O dano é limitado por
+construção: cada convite carrega o uid de quem o criou e serve uma vez só.
 
 ### 3.2 `partnerships/{pid}` no nascimento
 
@@ -133,136 +161,267 @@ para reduzir a chance de o gerador produzir palavras ofensivas por acaso.
 
   status: 'active',
   createdBy: inviterUid,
-  createdAt: serverTimestamp(),
-  activatedAt: serverTimestamp(),           // data de aniversário
+  bornFromInvite: code,                     // ← como a regra prova o consentimento
+  createdAt: request.time,
+  activatedAt: request.time,
 
-  xparceria: XP.PARTNERSHIP_BORN,           // 100
+  xparceria: 100,                           // XP.PARTNERSHIP_BORN
   level: 1,
   xpIntoLevel: 100,
   xpForNextLevel: 122,                      // xpForNextLevel(1) = 100 + 22
 
-  temperature: TEMPERATURE.INITIAL,         // 50
-  temperatureBand: 'mild',                  // bandForTemperature(50)
+  temperature: 50,                          // TEMPERATURE.INITIAL
+  temperatureBand: 'mild',
 
   streak: { current: 0, longest: 0, lastDay: null, freezesLeft: 2 },
-  stats: {
-    encounterCount: 0, totalMinutesTogether: 0, lastEncounterAt: null,
-    daysSinceLastEncounter: 0, firstEncounterAt: null,
-    longestEncounterMinutes: 0, maxDistanceKm: 0, placesVisited: 0,
-  },
+  stats: { encounterCount: 0, totalMinutesTogether: 0, lastEncounterAt: null,
+           daysSinceLastEncounter: 0, firstEncounterAt: null,
+           longestEncounterMinutes: 0, maxDistanceKm: 0, placesVisited: 0 },
 
   achievements: ['o-comeco'],
   superPartnershipId: null,
-  updatedAt: serverTimestamp(),
+  updatedAt: request.time,
 }
 ```
 
+**Todos esses valores são literais fixados pela regra de `create`.** Não há um único
+número que o cliente escolha, e a §4.2 mostra como.
+
+`bornFromInvite` é o campo novo em relação ao §7 do doc de produto. Ele existe porque a
+regra precisa de um caminho para o convite a fim de provar que a outra pessoa consentiu.
+
 Detalhe de produto que cai de graça da curva de níveis: 100 XParceria contra os 122 do
-nível 2 deixa a barra em **82% já na cerimônia**. Nasce a um passo de subir de nível, o
-que é exatamente o incentivo certo no primeiro minuto.
+nível 2 deixa a barra em **82% já na cerimônia**. A parceria nasce a um passo de subir
+de nível.
 
-A conquista `'o-comeco'` é gravada como literal. O catálogo de conquistas é da Spec 5;
-adiantar só o id mantém a cerimônia inteira ("Conquista desbloqueada: O Começo") sem
-antecipar o sistema.
+A conquista `'o-comeco'` é gravada como literal. O catálogo é da Spec 5; adiantar só o
+id mantém a cerimônia inteira sem antecipar o sistema.
 
-### 3.3 Evento de nascimento
+### 3.3 Eventos
 
-`partnerships/{pid}/events/{eventId}`, `type: 'partnership_born'`, `xpAwarded: 100`,
-`occurredAt`. Append-only, como todo evento.
+`partnerships/{pid}/events/{eventId}`, append-only.
 
-### 3.4 Escritas colaterais do aceite
+O evento de nascimento tem **id fixo `born`**. Isso o torna idempotente, o que a §4.3
+exige. Os demais têm id automático.
 
-| Documento | Mudança |
+| Evento | `xpAwarded` |
 |---|---|
-| `users/{uid}` ×2 | `stats.partnershipCount += 1`, `stats.totalXParceria += 100` |
-| `presence/{uid}` ×2 | `visibleTo` recebe o uid do outro (upsert com merge) |
-| `invites/{code}` | `status: 'accepted'`, `usedBy: accepterUid` |
+| `partnership_born` | 100 |
+| `partnership_paused`, `partnership_resumed`, `partnership_ended` | 0 |
 
-O `visibleTo` nascer correto faz a regra mais importante do app (§7 — *sem parceria
-aceita, a localização não existe para você*) valer desde o primeiro segundo. A Spec 3
-encontra o terreno pronto e só escreve coordenada.
-
-O documento de `presence` pode ainda não existir no aceite — a function usa `merge`, e
-o Admin SDK ignora as rules, então o documento nasce com `visibleTo` preenchido e sem
-`location`. A regra de update do cliente continua exigindo `visibleTo` inalterado.
+A regra fixa o `xpAwarded` de cada tipo. Evento de encontro continua `if false` — é da
+Spec 4, e é onde XParceria de verdade seria forjável.
 
 ---
 
-## 4. Cloud Functions
+## 4. A arquitetura sem servidor
 
-### 4.1 Estrutura
+### 4.1 O princípio, reformulado
 
-`functions/` na raiz, com `package.json`, `tsconfig.json` e configuração de Jest
-próprios. O Expo e o Node do servidor não compartilham resolução de módulos, e misturar
-os dois é a origem clássica de conflito de peer dependency neste projeto.
+O §6 diz *"o cliente propõe, o servidor decide"*. Sem servidor:
 
-- `firebase-functions` v2 — `onCall`, `onDocumentUpdated`
-- Região **`southamerica-east1`**, a mesma do Firestore
-- `shared/` importado por path relativo: as fórmulas de nível e as constantes de XP
-  existem em **um** lugar, usado por cliente e servidor
+> **As security rules são o servidor.** Cada valor que o cliente não pode escolher é um
+> literal na regra. Cada regra tem um teste que a vê negando.
 
-### 4.2 As funções
+A diferença prática em relação a Cloud Functions é que a regra **valida**, mas não
+**calcula**. Serve para o nascimento, em que todos os valores são constantes conhecidas.
+Não serve para o motor de progressão, em que o valor depende de estado anterior — e é
+por isso que a §7 desta spec trata o que a Spec 4 vai precisar.
 
-| Função | Tipo | Contrato |
-|---|---|---|
-| `createInvite` | callable | Exige auth e perfil existente. Gera código único (retry no `create`, que falha em documento existente). Teto de 10 convites pendentes não expirados por usuário. Retorna `{ code, url }`. |
-| `previewInvite` | callable | Recebe `code`. Retorna `{ fromProfile, canAccept, reason }` com `reason ∈ {expired, used, self, already-partners}`. Nunca devolve o documento cru. |
-| `acceptInvite` | callable | A transação da §3. Idempotente por construção: o segundo aceite encontra `status: 'accepted'`. |
-| `pausePartnership` | callable | `active → paused`. **Remove os dois do `visibleTo` um do outro** — é o que "só desliga o mapa" significa. Evento `partnership_paused`. |
-| `resumePartnership` | callable | `paused → active`. Restaura o `visibleTo`. Evento `partnership_resumed`. |
-| `endPartnership` | callable | Qualquer status → `ended`. Limpa `visibleTo`, decrementa `stats.partnershipCount` dos dois, evento `partnership_ended`. Não apaga nada. |
-| `onUserProfileWrite` | trigger `onDocumentUpdated('users/{uid}')` | Se `displayName`, `photoURL` ou `avatarEmoji` mudaram, propaga para `memberProfiles[uid]` de todas as parcerias do usuário, em lote. Sai cedo se nada relevante mudou — senão a própria escrita de `lastActiveAt` dispararia a propagação. |
+### 4.2 Como a regra prova o consentimento
 
-Todas as callables validam **associação** antes de qualquer escrita: quem não é membro
-da parceria recebe `permission-denied`, não `not-found` — vazar existência já é vazar.
+A pergunta que decide a segurança deste desenho: *o que impede a Carol de criar uma
+parceria com a Alice sem que a Alice queira?*
 
-### 4.3 Erros
+O documento de convite. A parceria carrega `bornFromInvite`, e a regra de `create`
+segue esse ponteiro:
 
-`HttpsError` tem um **enum fechado** de códigos — `already-partners` não existe e seria
-rejeitado pelo SDK. O código carrega a categoria, e `details.reason` carrega o caso
-específico, que é o que o cliente usa para escolher a mensagem:
+```js
+function inviteAuthorizes(code, inviterUid, accepterUid) {
+  let inv = get(/databases/$(database)/documents/invites/$(code)).data;
+  return inv.fromUid == inviterUid
+      && inv.fromUid != accepterUid
+      && inv.usedBy == null
+      && inv.status == 'pending'
+      && inv.expiresAt > request.time;
+}
+```
 
-| Situação | `code` | `details.reason` |
-|---|---|---|
-| Sem sessão | `unauthenticated` | — |
-| Sem perfil criado | `failed-precondition` | `no-profile` |
-| Teto de 10 convites pendentes | `failed-precondition` | `invite-limit` |
-| Código inexistente | `not-found` | — |
-| Convite expirado | `deadline-exceeded` | `expired` |
-| Convite já usado | `already-exists` | `used` |
-| Aceitar o próprio convite | `invalid-argument` | `self` |
-| Já são parceiros | `already-exists` | `already-partners` |
-| Não é membro da parceria | `permission-denied` | — |
+A Carol só cria a parceria se estiver de posse de um convite válido e não usado que a
+Alice gerou. É exatamente o mesmo nível de garantia que a Cloud Function daria: quem tem
+o código pode aceitar, e ninguém mais.
+
+A mesma transação marca o convite como usado. As duas escritas são avaliadas contra o
+estado **anterior** à transação, então `usedBy == null` vale para as duas. Dois aceites
+simultâneos: as duas transações escrevem o mesmo documento de convite, o Firestore aborta
+uma. Sem parceria duplicada, sem convite reutilizado.
+
+### 4.3 A birth em duas fases
+
+Dentro de uma transação, `get()` numa regra enxerga o estado **anterior** à transação.
+A parceria que está sendo criada ainda não existe para a regra do evento — que precisa
+verificar se quem escreve é membro. Escrever os dois na mesma transação é impossível.
+
+Portanto:
+
+1. **Transação:** cria `partnerships/{pid}` e marca `invites/{code}` como usado.
+2. **Escrita seguinte:** cria `partnerships/{pid}/events/born`.
+
+Se a segunda falhar, a parceria existe sem o evento de nascimento na timeline. O id
+fixo `born` torna a escrita idempotente, e o cliente a repete ao abrir a parceria. A
+alternativa — recusar a parceria porque o evento falhou — seria pior.
+
+Pausar, retomar e encerrar não têm esse problema: a parceria já existe, e o `get()` da
+regra do evento a enxerga. Vão em lote único.
+
+### 4.4 `visibleTo` sai da Spec 2
+
+O plano com Cloud Functions preenchia `visibleTo` no nascimento. Sem servidor não dá:
+quem aceita não pode escrever o documento de presença do outro, e o próprio não pode ser
+escrito na mesma transação pelo motivo da §4.3.
+
+O desenho correto passa a ser **cada usuário mantém o próprio `visibleTo`**, reconciliado
+ao abrir o app: o cliente lê as parcerias ativas e sincroniza a lista. A regra libera o
+dono a adicionar um uid por vez, provando com `get()` que existe parceria ativa com
+aquela pessoa:
+
+```js
+function pid(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
+```
+
+Isso é presença, e presença é a **Spec 3**. A Spec 2 garante que a parceria seja a fonte
+da verdade; a Spec 3 escreve a reconciliação e as regras correspondentes. Nada se perde:
+não há localização escrita até lá.
+
+### 4.5 O que este desenho não garante
+
+Honestidade sobre a diferença em relação a Cloud Functions:
+
+| Risco | Situação |
+|---|---|
+| Forjar XParceria, nível ou temperatura no nascimento | **Impedido.** Todos são literais na regra |
+| Criar parceria sem consentimento | **Impedido.** Exige convite válido do outro |
+| Reutilizar um convite | **Impedido.** `usedBy` e a transação |
+| Escrever evento de encontro | **Impedido.** `if false` até a Spec 4 |
+| Mentir no `occurredAt` de um evento de ciclo de vida | **Possível.** Cosmético |
+| Encerrar ou pausar a parceria unilateralmente | **Possível — e é o comportamento desejado** |
+| Criar muitos convites | **Possível.** Cada um serve uma vez e carrega o uid do dono |
+| Mentir sobre o próprio `displayName` em `memberProfiles` | **Possível** — e equivale a mudar o próprio nome, que já é permitido |
+
+Nenhum desses toca o número que é o produto. O que **precisaria** de servidor de verdade
+é o motor da Spec 4, e a §7 trata disso.
 
 ---
 
 ## 5. Security rules
 
-### 5.1 Mudança
+O centro de gravidade desta spec. Sem servidor, é aqui que mora a garantia.
+
+### 5.1 `invites`
 
 ```js
 match /invites/{code} {
-  allow read, write: if false;   // era: read se autenticado, create pelo próprio
+  // `get` sim, `list` não: com o código a pessoa lê o convite; sem ele, não
+  // varre a coleção. São 32^8 ≈ 1,1 trilhão de códigos — adivinhar é inviável.
+  allow get:  if isSignedIn();
+  allow list: if false;
+
+  allow create: if isOwner(request.resource.data.fromUid)
+                && request.resource.data.usedBy == null
+                && request.resource.data.status == 'pending'
+                && request.resource.data.maxUses == 1
+                && request.resource.data.createdAt == request.time
+                && request.resource.data.expiresAt
+                     == request.time + duration.value(7, 'd')
+                && matchesOwnProfile(request.resource.data.fromProfile);
+
+  // Só a transição pendente → usado, e só por quem não é o dono.
+  allow update: if isSignedIn()
+                && resource.data.usedBy == null
+                && request.resource.data.usedBy == request.auth.uid
+                && request.auth.uid != resource.data.fromUid
+                && request.resource.data.status == 'accepted'
+                && request.resource.data.diff(resource.data)
+                     .affectedKeys().hasOnly(['usedBy', 'status']);
+
+  allow delete: if false;
 }
 ```
 
-A regra atual permite que qualquer autenticado leia qualquer convite e crie convites
-diretamente — inclusive forjando `fromProfile`. Com tudo passando por callable, o
-cliente perde acesso direto à coleção e o problema deixa de existir.
+`matchesOwnProfile` compara com `get(/users/$(request.auth.uid))` — sem isso, qualquer
+um geraria um convite exibindo o nome e a foto de outra pessoa, que é o vetor de
+engenharia social mais óbvio de um produto de convite.
 
-`partnerships` mantém `read: if isMember(resource.data)` e `write: if false`, agora
-exercitado de verdade. `presence` e `users` ficam como estão.
+### 5.2 `partnerships` — create
 
-### 5.2 Novos testes de negação
+Todo campo é literal. A regra é longa de propósito: é a fronteira inteira do produto.
 
-- não-membro **não lê** `partnerships/{pid}`
-- membro **não escreve** `partnerships/{pid}` (mutação específica em `xparceria`)
-- membro **não escreve** `partnerships/{pid}/events/{id}`
-- autenticado **não lê** `invites/{code}`
-- autenticado **não cria** `invites/{code}`
+```js
+allow create: if isSignedIn()
+              && pidMatches(pid, request.resource.data.members)
+              && request.auth.uid in request.resource.data.members
+              && request.resource.data.status == 'active'
+              && request.resource.data.createdBy != request.auth.uid
+              && request.resource.data.createdBy in request.resource.data.members
+              && inviteAuthorizes(request.resource.data.bornFromInvite,
+                                  request.resource.data.createdBy,
+                                  request.auth.uid)
+              && request.resource.data.xparceria == 100
+              && request.resource.data.level == 1
+              && request.resource.data.xpIntoLevel == 100
+              && request.resource.data.xpForNextLevel == 122
+              && request.resource.data.temperature == 50
+              && request.resource.data.temperatureBand == 'mild'
+              && request.resource.data.achievements == ['o-comeco']
+              && request.resource.data.superPartnershipId == null
+              && request.resource.data.streak == zeroStreak()
+              && request.resource.data.stats == zeroPartnershipStats()
+              && request.resource.data.createdAt == request.time
+              && request.resource.data.activatedAt == request.time;
+```
 
-Aplicando a lição da Spec 1 — *uma mutação não valida uma suíte* —, cada regra ganha uma
-mutação própria, e o teste tem de ser visto falhando antes de contar.
+`createdBy != request.auth.uid` é o que impede alguém de criar uma parceria consigo
+mesmo como convidante. `pidMatches` prova que o id do documento é de fato
+`members[0] + '_' + members[1]` com `members` ordenado e de tamanho 2 — sem isso, o
+mesmo par geraria documentos diferentes e o `array-contains` do mapa mostraria duplicata.
+
+### 5.3 `partnerships` — update
+
+Três ramos disjuntos, cada um com `affectedKeys().hasOnly(...)`. Misturá-los num único
+ramo é como se abre um buraco sem perceber.
+
+| Ramo | Chaves | Condição |
+|---|---|---|
+| **Ciclo de vida** | `status`, `updatedAt` | membro, e transição em `{active→paused, paused→active, active→ended, paused→ended}` |
+| **Reativação** | `status`, `temperature`, `temperatureBand`, `memberProfiles`, `bornFromInvite`, `updatedAt` | `resource.data.status == 'ended'`, novos valores fixados (`active`, 50, `mild`) e `inviteAuthorizes(...)` |
+| **Perfil** | `memberProfiles`, `updatedAt` | membro, e o diff de `memberProfiles` afeta **apenas** `request.auth.uid` |
+
+`delete` continua `if false`: encerrar é mudar `status`, nunca apagar.
+
+### 5.4 `partnerships/{pid}/events/{id}`
+
+```js
+allow read:   if isMember(partnership(pid));
+allow create: if isMember(partnership(pid))
+              && request.resource.data.occurredAt == request.time
+              && lifecycleEventXp(request.resource.data.type)
+                   == request.resource.data.xpAwarded;
+allow update, delete: if false;
+```
+
+`lifecycleEventXp` devolve 100 para `partnership_born`, 0 para os três de ciclo de vida,
+e `-1` para qualquer outro tipo — o que nega encontro, level up e missão, que são das
+Specs 4 e 5. Um tipo novo aparecendo sem entrada na função é negado por omissão, que é
+o padrão correto.
+
+### 5.5 Cobertura de teste
+
+**Cada literal fixado acima tem um teste que tenta forjá-lo e o vê ser negado.** São
+cerca de 40 casos novos. Não é excesso: sem servidor, essa suíte é a única coisa entre
+o produto e um número inventado.
+
+E vale a lição da Spec 1 — *uma mutação não valida uma suíte*. Para cada regra, mutar
+**aquela** condição e ver o teste correspondente falhar.
 
 ---
 
@@ -271,7 +430,7 @@ mutação própria, e o teste tem de ser visto falhando antes de contar.
 ### 6.1 Rotas
 
 ```
-app/(auth)/onboarding/
+app/(app)/onboarding/
     first-invite.tsx      "Quem é o seu parceiro?" → gera e compartilha
     waiting.tsx           espera com preview animado
 
@@ -285,30 +444,30 @@ app/(modals)/
     partnership-born.tsx  cerimônia
 ```
 
+O onboarding fica em **`(app)/`**, não em `(auth)/`: o `(auth)/_layout.tsx` da Spec 1
+redireciona para `/` assim que o perfil existe, e o convite acontece depois do perfil.
+Em `(auth)/` as telas seriam inalcançáveis.
+
 **A raiz é a lista, não o mapa.** O §5 manda o mapa ser a raiz, e ele será — na Spec 3,
 quando existir. Montar um tab bar de três abas com duas vazias agora é andaime a
-demolir depois; a Spec 3 move a lista para `(tabs)/partnerships.tsx`.
-
-O onboarding não termina sem um convite enviado ou um código aceito — é o que faz o
-funil existir, e o Ato I é explícito quanto a isso.
+demolir depois.
 
 ### 6.2 Módulos
 
 ```
 src/features/invite/
-    services/invites.ts       wrappers das callables
-    hooks/useInvite.ts
-    CreateInviteScreen.tsx · WaitingScreen.tsx · EnterCodeScreen.tsx · AcceptInviteScreen.tsx
+    services/invites.ts       criar, ler e aceitar (transação)
+    hooks/useCreateInvite.ts · useInvitePreview.ts · useAcceptInvite.ts
+    FirstInviteScreen.tsx · WaitingScreen.tsx · EnterCodeScreen.tsx · AcceptInviteScreen.tsx
 src/features/partnership/
-    services/partnerships.ts
-    hooks/usePartnerships.ts · hooks/usePartnership.ts
+    services/partnerships.ts  pausar, retomar, encerrar, propagar perfil
+    hooks/usePartnerships.ts · usePartnership.ts
     PartnershipListScreen.tsx · PartnershipCard.tsx · PartnershipOverviewScreen.tsx
 src/features/ceremony/
-    PartnershipBornCeremony.tsx
+    PartnershipBornCeremony.tsx · useBornCeremony.ts
 src/core/firebase/
-    functions.ts              cliente de callables + wiring do emulador
-    useFirestoreDoc.ts        ponte onSnapshot → queryClient.setQueryData
-    useFirestoreCollection.ts
+    useFirestoreDoc.ts · useFirestoreCollection.ts    ponte para o React Query
+    firestoreError.ts                                  código → mensagem em pt-BR
 ```
 
 Mesmo padrão da Spec 1: `services/` puro sobre o SDK, `hooks/` com React Query, telas
@@ -317,94 +476,99 @@ sem lógica de negócio.
 A ponte do §6 do doc de produto é necessária pela primeira vez aqui. **Nenhum componente
 chama `onSnapshot` diretamente** — um ponto único de integração, testável isolado.
 
-### 6.3 A cerimônia simultânea
+### 6.3 Erros
 
-Os dois aparelhos escutam a mesma query (`members array-contains uid`, `status` ativo).
-Quando uma parceria aparece e o aparelho ainda não marcou aquele `pid` como visto no
-AsyncStorage (`ceremony:born:{pid}`), o modal sobe.
+Sem callables não há `details.reason`; o que volta é `permission-denied` para tudo que a
+regra recusa. O cliente **valida antes** — lê o convite, checa expiração, uso e
+auto-convite com `checkInvite()` de `shared/`, e só então tenta a transação. A regra
+continua sendo a autoridade; a validação prévia existe para a mensagem ser específica em
+vez de "sem permissão".
 
-Quem aceitou vê ao retornar da callable. Quem convidou vê na tela de espera, no mesmo
+### 6.4 A cerimônia simultânea
+
+Os dois aparelhos escutam a mesma query (`members array-contains uid`). Quando uma
+parceria aparece e o aparelho ainda não marcou aquele `pid` como visto no AsyncStorage
+(`ceremony:born:{pid}`), o modal sobe.
+
+Quem aceitou vê ao voltar da transação. Quem convidou vê na tela de espera, no mesmo
 instante, sem push e sem polling. A flag persistida é o que impede a cerimônia de
-reprisar a cada abertura do app — sem ela, a magia vira incômodo no segundo dia.
+reprisar a cada abertura do app.
 
-### 6.4 Estados de tela
+### 6.5 Estados de tela
 
-Toda tela desta spec tem estado vazio, de carregamento (skeleton, nunca spinner) e de
-erro, como manda o §19. A lista vazia é a mais importante: é onde mora o convite.
+Toda tela tem estado vazio, de carregamento (skeleton, nunca spinner) e de erro, como
+manda o §19. A lista vazia é a mais importante: é onde mora o convite.
 
 ---
 
-## 7. Landing
+## 7. O que a Spec 4 vai precisar resolver
 
-Pasta `hosting/`, HTML estático publicado no Firebase Hosting (dentro do free tier).
+Registrado agora para que a decisão de hoje não vire surpresa em três semanas.
 
-- Nome de quem convida por query string: `?de=Gabriel`
-- `og:title` / `og:image` para o preview rico no WhatsApp
-- Instrução de instalar o Expo Go
-- Código grande, com botão de copiar
-- **Zero leitura do Firestore** — sendo estática, não tem o que vazar nem o que autenticar
+O motor de progressão precisa de duas coisas que regras não fazem: **calcular a partir
+do estado anterior** e **rodar sozinho todo dia**. Duas saídas, nenhuma exigindo cartão:
 
-A personalização real ("O Gabriel quer construir uma parceria com você", com foto)
-acontece no app, depois do `previewInvite`, onde há autenticação.
+1. **Decaimento preguiçoso.** Em vez de um job baixar a temperatura toda madrugada,
+   guardar `temperatureBase` e `temperatureAt` e derivar a temperatura atual na leitura,
+   com a função pura que a Spec 1 já tem. O job diário deixa de existir. Vale para
+   temperatura, `daysSinceLastEncounter` e banda.
+2. **XParceria por delta com teto na regra.** Emoji e encontro concedem valores
+   conhecidos, e a regra pode exigir `xparceria == resource.data.xparceria + 6` com o
+   teto diário lido do documento do dia. É mais trabalhoso que a Cloud Function, mas é
+   o mesmo tipo de fixação que esta spec já faz.
+
+A saída 1 é boa o bastante para ser preferível mesmo com servidor disponível. Se o
+Blaze abrir antes da Spec 4, vale reavaliar — mas o produto não fica bloqueado se não
+abrir.
 
 ---
 
 ## 8. Testes
 
-Três camadas, nesta ordem.
-
 ### 8.1 Puro, sem Firebase
 
-`shared/` e `functions/src/domain/`:
+`shared/`:
 
-- `partnershipId(uidA, uidB)` — comutatividade e ordenação
-- `buildBirthPartnership(inviter, accepter)` — devolve o documento inteiro; é a decisão
-  de negócio do nascimento como função pura, reutilizada na reativação
-- `isInviteUsable(invite, now, accepterUid)` — expiração, uso, auto-convite
-- gerador de código — comprimento, alfabeto, ausência de caracteres ambíguos
+- `partnershipId(uidA, uidB)` — comutatividade, ordenação, recusa de auto-parceria
+- `buildBirthPartnership(inviter, accepter)` — o documento inteiro, reutilizado na
+  reativação. É a decisão de negócio do nascimento como função pura, e o que a regra
+  fixa tem de bater com o que ela produz
+- `checkInvite(invite, accepterUid, now)` — expiração, uso, auto-convite
+- gerador e normalizador de código — alfabeto, comprimento, correção de `I/L/O/U`
 
-### 8.2 Callables contra o emulador
+### 8.2 Rules — a suíte que carrega esta spec
 
-`firebase emulators:exec --only firestore,auth,functions`, chamando as callables com
-token real do Auth emulator.
+Além dos 38 testes da Spec 1, cerca de 40 casos novos:
 
-**O caminho de fraude é obrigatório, não o feliz:**
-
-| Caso | Esperado |
+| Grupo | Casos |
 |---|---|
-| aceitar o próprio convite | `invalid-argument` / `self` |
-| aceitar duas vezes | `already-exists` / `used` |
-| convite expirado | `deadline-exceeded` / `expired` |
-| convite de terceiro já usado | `already-exists` / `used` |
-| aceitar sem perfil criado | `failed-precondition` / `no-profile` |
-| já são parceiros (`active` ou `paused`) | `already-exists` / `already-partners` |
-| já foram parceiros (`ended`) | reativa, preserva XParceria, não reconcede +100, `partnershipCount` volta a contar |
-| não-membro chama `endPartnership` | `permission-denied` |
-| cliente escreve `partnerships` direto | negado pelas rules |
-| 11º convite pendente | `failed-precondition` / `invite-limit` |
-| `lastActiveAt` muda sozinho | trigger **não** propaga |
+| `invites` | criar com `fromUid` alheio · forjar `fromProfile` · `expiresAt` fora dos 7 dias · `usedBy` preenchido no create · `list` da coleção · marcar como usado sendo o dono · alterar campo fora de `{usedBy, status}` · delete |
+| `partnerships` create | sem convite · convite de terceiro · convite expirado · convite já usado · `createdBy` sendo o próprio · não estar em `members` · `pid` fora de ordem · `members` com 1 ou 3 uids · **cada** literal forjado (`xparceria`, `level`, `xpIntoLevel`, `xpForNextLevel`, `temperature`, `temperatureBand`, `achievements`, `streak`, `stats`, `superPartnershipId`, `createdAt`) |
+| `partnerships` update | não-membro mudando status · transição proibida (`ended→active` pelo ramo de ciclo de vida) · mexer em `xparceria` junto com `status` · alterar `memberProfiles` do outro · reativação sem convite válido |
+| `events` | não-membro lendo · membro escrevendo `encounter` · `xpAwarded` errado em `partnership_born` · `occurredAt` no passado · update e delete |
 
-### 8.3 Rules e UI
+Cada uma com mutação da regra correspondente, vista falhando.
 
-Suíte de negação estendida (§5.2). RNTL para as telas e para a cerimônia, lembrando que
-`render` e `fireEvent` do RNTL v14 são **assíncronos** — armadilha já paga na Spec 1.
+### 8.3 Integração e UI
 
-`npm run validate` passa a ser
-`typecheck && test && test:rules && test:functions`.
+Serviços de `invites` e `partnerships` testados contra o emulador com dois usuários
+reais, cobrindo o caminho de fraude: aceitar o próprio convite, aceitar duas vezes,
+convite expirado, já serem parceiros, reativar parceria encerrada.
+
+RNTL para as telas e para a cerimônia, lembrando que `render` e `fireEvent` do RNTL v14
+são **assíncronos** — armadilha já paga na Spec 1.
+
+`npm run validate` continua `typecheck && test && test:rules`. Sem workspace novo.
 
 ---
 
 ## 9. Pré-requisitos manuais
 
-| # | Tarefa | Por quê |
+| # | Tarefa | Bloqueia |
 |---|---|---|
-| 1 | Ativar o **Blaze** no `parceria-db699` | Deploy de Cloud Functions exige plano Blaze — a documentação do Firebase é explícita |
-| 2 | Criar **alerta de orçamento em R$ 5** | Blaze sem teto é a única forma de este projeto custar dinheiro de verdade. Não é opcional |
-| 3 | Habilitar Firebase Hosting no projeto | Landing |
+| 1 | Habilitar o **Firebase Hosting** no projeto (console → Hosting → Começar) | A landing. Está no plano gratuito, não depende de Blaze |
 
-Com 50 usuários, o consumo fica ordens de grandeza abaixo do free tier (2 milhões de
-invocações/mês). O custo esperado é R$ 0; o alerta existe contra erro de código, não
-contra uso.
+Nada mais. O projeto continua inteiramente no plano Spark.
 
 ---
 
@@ -412,20 +576,23 @@ contra uso.
 
 | Risco | Situação |
 |---|---|
-| **Spec 1 nunca foi aberta num celular** | Decisão do Gabriel: verificar no aceite final da Spec 2. Concentra todas as surpresas de runtime (Reanimated, gesture-handler, worklets) num só momento, e a cerimônia de nascimento é justamente animação de tela cheia. Foi assim que a Spec 1 ficou sem aceite |
+| **Regras carregam a garantia sozinhas** | Mitigado pela suíte de ~40 negações com mutação. É o custo real de não ter servidor, e é onde a revisão deve gastar tempo |
+| **Spec 1 nunca foi aberta num celular** | Decisão do Gabriel: verificar no aceite final da Spec 2. Concentra as surpresas de runtime (Reanimated, gesture-handler, worklets) num só momento, e a cerimônia é animação de tela cheia |
 | Convite por código é mais friccional que link | Aceito — a alternativa depende de comportamento que a doc do Expo chama de indefinido. Medir a conversão no teste de campo |
-| Blaze ativo | Mitigado pelo alerta de orçamento, não eliminado |
-| `memberProfiles` stale entre a mudança de perfil e a propagação | Janela de segundos, em operação rara. Aceito |
+| Evento de nascimento pode faltar por um instante | Id fixo `born` torna a escrita idempotente e o cliente a repete |
+| `memberProfiles` stale após edição de perfil | Janela pequena, evento raro, dado cosmético. Autocorrige na próxima edição |
+| Spec 4 sem servidor | Endereçado na §7: decaimento preguiçoso remove a necessidade do job |
 
 ---
 
 ## 11. Critério de aceite
 
-1. Duas pessoas, em dois aparelhos, viram parceiras via código de convite — e **os dois
+1. Duas pessoas, em dois aparelhos, viram parceiras via código de convite — e **as duas
    veem a cerimônia de nascimento**.
-2. A parceria aparece na lista dos dois com nível 1, 100 XParceria e temperatura 50.
-3. Pausar remove do `visibleTo`; retomar devolve; encerrar preserva XParceria e nível.
-4. `npm run validate` verde nas quatro camadas.
+2. A parceria aparece na lista das duas com nível 1, 100 XParceria e temperatura 50.
+3. Pausar, retomar e encerrar funcionam; encerrar preserva XParceria e nível, e um
+   convite novo reativa a mesma parceria sem reconceder os +100.
+4. `npm run validate` verde, com a suíte de rules cobrindo cada literal fixado.
 5. **O app roda no Expo Go num celular real** — o aceite pendente da Spec 1, cobrado
    aqui.
 
