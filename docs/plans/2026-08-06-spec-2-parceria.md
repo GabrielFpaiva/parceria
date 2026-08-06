@@ -108,7 +108,7 @@ Funções puras, sem Firebase. É a base de tudo: o que a regra fixa tem de bate
 - Produces:
   - `partnershipId(a: string, b: string): string`
   - `buildBirthPartnership(input: BirthInput): BirthPartnership`
-  - `buildReactivationUpdate(profiles: Record<string, MemberProfile>): ReactivationUpdate`
+  - `buildReactivationUpdate(profiles: Record<string, MemberProfile>, inviteCode: string): ReactivationUpdate`
   - `generateInviteCode(random?: () => number): string`
   - `normalizeInviteCode(raw: string): string`
   - `checkInvite(invite: InviteCheckInput, accepterUid: string, nowMs: number): InviteRejection | null`
