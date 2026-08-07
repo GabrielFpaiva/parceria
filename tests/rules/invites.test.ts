@@ -110,6 +110,11 @@ describe('invites — update', () => {
     await assertFails(bob.doc('invites/AB3D4F7H').update({ usedBy: CAROL, status: 'accepted' }));
   });
 
+  it('NEGA que anônimo marque um convite como usado', async () => {
+    const anon = env.unauthenticatedContext().firestore();
+    await assertFails(anon.doc('invites/AB3D4F7H').update({ usedBy: BOB, status: 'accepted' }));
+  });
+
   it('NEGA que o dono aceite o próprio convite', async () => {
     const alice = env.authenticatedContext(ALICE).firestore();
     await assertFails(alice.doc('invites/AB3D4F7H').update({ usedBy: ALICE, status: 'accepted' }));

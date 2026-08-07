@@ -111,6 +111,10 @@ service cloud.firestore {
                     && matchesOwnProfile(request.resource.data.fromProfile);
 
       // Só a transição pendente → usado, e só por quem não é o dono.
+      // isSignedIn() aqui é defesa em profundidade, não a única barreira:
+      // para anônimo, request.auth é null e request.auth.uid abaixo já
+      // vira erro de avaliação, que nega sozinho. Não é código morto —
+      // é redundância deliberada, não remova sem entender isso.
       allow update: if isSignedIn()
                     && resource.data.usedBy == null
                     && resource.data.status == 'pending'
