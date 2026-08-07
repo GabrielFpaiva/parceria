@@ -65,6 +65,14 @@ describe('invites — create', () => {
     await assertFails(alice.doc('invites/AB3D4F7H').set(validInvite(ALICE, { maxUses: 99 })));
   });
 
+  it('NEGA código no documento diferente do id do documento', async () => {
+    // Sem esta guarda, invites/AB3D4F7H poderia conter code: 'OUTROCOD'.
+    // O documento passaria a mentir sobre a própria identidade, e a regra que
+    // impede isso seria uma linha que nenhum teste exerce.
+    const alice = env.authenticatedContext(ALICE).firestore();
+    await assertFails(alice.doc('invites/AB3D4F7H').set(validInvite(ALICE, { code: 'OUTROCOD' })));
+  });
+
   it('NEGA criação a quem não está autenticado', async () => {
     const anon = env.unauthenticatedContext().firestore();
     await assertFails(anon.doc('invites/AB3D4F7H').set(validInvite(ALICE)));
