@@ -113,6 +113,15 @@ describe('invites — update', () => {
     await assertFails(bob.doc('invites/USED1234').update({ usedBy: BOB, status: 'accepted' }));
   });
 
+  it('NEGA aceitar convite com usedBy preenchido e status ainda pendente', async () => {
+    // Estado inconsistente, só alcançável por escrita administrativa ou
+    // migração futura. A guarda `usedBy == null` é o que o barra — sem este
+    // teste ela é uma linha que alguém remove sem consequência.
+    await seedInvite(env, 'INCONS01', validInvite(ALICE, { usedBy: CAROL }));
+    const bob = env.authenticatedContext(BOB).firestore();
+    await assertFails(bob.doc('invites/INCONS01').update({ usedBy: BOB, status: 'accepted' }));
+  });
+
   it('NEGA mexer em qualquer campo além de usedBy e status', async () => {
     const bob = env.authenticatedContext(BOB).firestore();
     await assertFails(
