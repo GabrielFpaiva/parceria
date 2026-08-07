@@ -122,6 +122,16 @@ describe('invites — update', () => {
     await assertFails(bob.doc('invites/INCONS01').update({ usedBy: BOB, status: 'accepted' }));
   });
 
+  it('NEGA aceitar convite com status accepted e usedBy ainda nulo', async () => {
+    // O espelho do teste acima: o outro estado inconsistente, alcançável só
+    // por escrita administrativa. Sem ele, `status == 'pending'` é uma guarda
+    // que nenhum teste exerce — um teste que vira os dois campos de uma vez
+    // prova que um deles importa, nunca qual.
+    await seedInvite(env, 'INCONS02', validInvite(ALICE, { status: 'accepted' }));
+    const bob = env.authenticatedContext(BOB).firestore();
+    await assertFails(bob.doc('invites/INCONS02').update({ usedBy: BOB, status: 'accepted' }));
+  });
+
   it('NEGA mexer em qualquer campo além de usedBy e status', async () => {
     const bob = env.authenticatedContext(BOB).firestore();
     await assertFails(
